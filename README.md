@@ -1,18 +1,24 @@
-# Machine Learning Template
+# XAI Framework: Empirical Completeness Bounds
 
-This project provides a machine learning quickstart template using PyTorch Lightning, Hydra, MLflow, and uv.
+This project empirically tests the theoretical completeness bounds for concept-based
+explainable AI (C-XAI) introduced in the accompanying paper: given a trained model
+`f = g o h` and a `k`-concept autoencoder `A = (E, D)` fitted on its latent space, it
+measures four quantities per (model, boundary, concept-extraction method, `k`) combination:
+
+-   **RE** — reconstruction error of the concept autoencoder
+-   **FE** — fidelity error between `f` and the induced concept-autoencoder model `f_A`
+-   **MCE** — model completeness error (via a fitted probe on the concept representations)
+-   **AE** — mean squared attribution error of per-concept contributions
+
+Theorem 1 in the paper guarantees `MCE <= FE <= L_g^2 * RE`; this repo runs the pipeline
+across models, boundaries, methods, and concept counts to check how tightly that bound
+holds in practice.
 
 ## Installation
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <your-repository-url>
-    cd machine-learning
-    ```
-2.  **Install uv:**
-    Follow the instructions on the [uv website](https://docs.astral.sh/uv/getting-started/installation/) if you don't have it installed.
+1.  **Clone the repository** and `cd` into it.
+2.  **Install uv:** follow the instructions on the [uv website](https://docs.astral.sh/uv/getting-started/installation/) if you don't have it installed.
 3.  **Install dependencies:**
-    This command creates a virtual environment and installs all necessary packages defined in [`pyproject.toml`](pyproject.toml).
     ```bash
     uv sync
     ```
@@ -20,68 +26,56 @@ This project provides a machine learning quickstart template using PyTorch Light
     ```bash
     uv sync --extra job
     ```
+4.  **Configure MLflow:** set `MLFLOW_TRACKING_URI` and credentials (see `.env`).
 
 ## Configuration
 
-This project uses [Hydra](https://hydra.cc/) for configuration management.
+This project uses [Hydra](https://hydra.cc/) for configuration management, composed from
+the [`configs/`](configs) directory. [`configs/concepts.yaml`](configs/concepts.yaml) is
+the entrypoint config for the bounds pipeline; [`configs/base.yaml`](configs/base.yaml)
+holds shared settings (MLflow experiment name, project storage path) that it inherits from.
 
--   Configuration files are located in the [`configs/`](configs) directory.
--   The configuration file [`configs/base.yaml`](configs/base.yaml) is the default project configuration which all other configurations inherit from.
--   You can override configuration parameters directly from the command line. For example, to change the batch size:
-    ```bash
-    uv run python -m <project_name> mode=fit data.batch_size=64
-    ```
-    Such approach is recomended throughtout development process, however, when submitting final changes to master branch it's recommended to create separate experiment configuration files in the `experiment` subdirectory for better organization and reproducibility.
--   The structure of the configs directory should follow the example below.
-    ```plaintext
-    configs
-    ├── data                        # Data-related configurations
-    ├── experiment                  # Experiment-specific configurations
-    │   └── <some_experiment>
-    ├── hydra
-    │   ├── default.yaml
-    │   └── job_logging
-    │       └── custom.yaml
-    ├── logger
-    │   └── mlflow.yaml
-    ├── preprocessing
-    │   ├── qc.yaml
-    │   ├── tiling.yaml
-    │   └── tissue_masks.yaml
-    ├── base.yaml
-    ├── preprocessing.yaml
-    ├── ml.yaml
-    └── ml
-        └── <some_configurations>   # Place your training configurations here
-    ```
--   Please do not delete the `configs/hydra` directory as it is required for Hydra execution.
--   MLflow is configured as the default logger (see [`configs/default.yaml`](configs/default.yaml)).
+Each run is defined by four composable axes, overridable from the command line:
+
+```plaintext
+configs
+├── model                # Model + latent decomposition (f = g o h), e.g. resnet50, vgg16
+├── data                 # Dataset + loader, e.g. imagenet, imagenette
+├── method               # Concept extraction method, e.g. pca, nmf, kmeans, sae, nonlinear_ae
+├── eval                 # num_concepts (k), fit/eval split, seed, completeness probe
+├── hydra
+│   ├── default.yaml
+│   └── job_logging/custom.yaml
+├── logger/mlflow.yaml
+├── base.yaml
+└── concepts.yaml
+```
+
+For a resnet50/vgg16 decomposition, the `model.decomposition.boundary` override selects
+where the model is split into `h`/`g` (`layer1`-`layer4` or `penultimate` for resnet50;
+`penultimate` only for vgg16 so far).
+
+Please do not delete the `configs/hydra` directory as it is required for Hydra execution.
 
 ## Usage
 
--   **Train the model:**
+-   **Run a single configuration:**
     ```bash
-    uv run python -m <project_name> mode=fit
+    uv run python -m concepts.bounds model=resnet50 data=imagenette method=pca eval.num_concepts=5
     ```
-
--   **Validate the model:**
-    Requires a checkpoint path to be set in the configuration (e.g., `checkpoint=path/to/your/checkpoint.ckpt`) or passed via the command line.
+-   **Run the full experiment grid** (5 boundaries x 5 methods x 3 concept counts on resnet50/imagenet):
     ```bash
-    uv run python -m <project_name> mode=validate checkpoint=path/to/checkpoint.ckpt
+    scripts/run_sweep.sh
     ```
-
--   **Test the model:**
-    Requires a checkpoint path.
+    Each combination is a separate Hydra job (`-m` multirun) that logs RE/FE/MCE/AE and its
+    hyperparameters to the MLflow experiment named in `configs/base.yaml`
+    (`metadata.experiment_name`), and writes `metrics.json` to
+    `{project_path}/cache/runs/{run_id}/`.
+-   **Submit a job to the cluster** instead of running locally, see [`scripts/run_concepts.py`](scripts/run_concepts.py).
+-   **Aggregate results** from MLflow into a comparison table and per-metric plots:
     ```bash
-    uv run python -m <project_name> mode=test checkpoint=path/to/checkpoint.ckpt
+    uv run python scripts/aggregate_results.py
     ```
-
--   **Run prediction:**
-    Requires a checkpoint path.
-    ```bash
-    uv run python -m <project_name> mode=predict checkpoint=path/to/checkpoint.ckpt
-    ```
-
 
 ## Linting, Formatting and Type Checking:
 
