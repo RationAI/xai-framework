@@ -1,0 +1,21 @@
+defaults:
+  - base
+  - model: resnet50
+  - data: imagenette
+  - method: pca
+  - eval: default
+  - _self_
+
+metadata:
+  run_name: ${model.name}_${model.decomposition.boundary}_${method.name}_k${eval.num_concepts}
+  description: >-
+    Empirical RE/FE/MCE/AE bounds for concept autoencoder method '${method.name}'
+    on model '${model.name}' (boundary '${model.decomposition.boundary}').
+  hyperparams:
+    model: ${model.name}
+    boundary: ${model.decomposition.boundary}
+    method: ${method.name}
+    num_concepts: ${eval.num_concepts}
+    data: ${data.name}
+    num_samples: ${data.num_samples}
+    seed: ${eval.seed}
