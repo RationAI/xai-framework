@@ -1,0 +1,13 @@
+name: imagenette
+num_samples: 2000 # trivial-compute smoke-test cap; null = use the full split
+loader:
+  _target_: concepts.data.imagenette.build_imagenette_loader
+  root: ${project_path}/data
+  split: val
+  size: "160px"
+  image_size: 224
+  batch_size: 64
+  num_samples: ${data.num_samples}
+  num_workers: 4
+  download: true
+  seed: ${eval.seed}

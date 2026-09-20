@@ -1,0 +1,5 @@
+name: nmf
+extractor:
+  _target_: concepts.methods.nmf.NMFMethod
+  max_iter: 200
+  seed: ${eval.seed}

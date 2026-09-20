@@ -1,0 +1,7 @@
+name: resnet50
+decomposition:
+  _target_: concepts.decomposition.TorchvisionDecomposition
+  name: resnet50
+  architecture: resnet50
+  weights: IMAGENET1K_V2
+  boundary: penultimate # one of: penultimate, layer1, layer2, layer3, layer4

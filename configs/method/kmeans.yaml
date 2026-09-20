@@ -1,0 +1,4 @@
+name: kmeans
+extractor:
+  _target_: concepts.methods.kmeans.KMeansMethod
+  seed: ${eval.seed}

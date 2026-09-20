@@ -1,0 +1,9 @@
+name: sae
+extractor:
+  _target_: concepts.methods.sae.SAEMethod
+  hidden_multiplier: 4 # encoder hidden width = min(hidden_multiplier * k, latent dim)
+  sparsity_weight: 0.001
+  epochs: 50
+  lr: 0.001
+  batch_size: 4096
+  seed: ${eval.seed}

@@ -1,0 +1,11 @@
+name: imagenet
+num_samples: 2000 # trivial-compute default cap; null = use the full split (50000 for validation)
+loader:
+  _target_: concepts.data.imagenet.build_imagenet_loader
+  root: ${project_path}/data/imagenet-1k
+  split: validation
+  image_size: 224
+  batch_size: 64
+  num_samples: ${data.num_samples}
+  num_workers: 0 # see build_imagenet_loader docstring: workers would duplicate the per-shard cache
+  seed: ${eval.seed}

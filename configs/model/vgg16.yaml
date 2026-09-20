@@ -1,0 +1,7 @@
+name: vgg16
+decomposition:
+  _target_: concepts.decomposition.TorchvisionDecomposition
+  name: vgg16
+  architecture: vgg16
+  weights: IMAGENET1K_V1
+  boundary: penultimate # only boundary supported for vgg so far

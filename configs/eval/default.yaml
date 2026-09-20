@@ -1,0 +1,8 @@
+num_concepts: 16
+seed: 0
+fit_fraction: 0.5 # fraction of cached latents used to fit E/D and the MCE probe; rest held out for evaluation
+probe:
+  _target_: concepts.probes.mlp.MLPProbe
+  hidden_dim: 128
+  epochs: 50
+  lr: 0.001

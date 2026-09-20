@@ -1,0 +1,8 @@
+name: nonlinear_ae
+extractor:
+  _target_: concepts.methods.nonlinear_ae.NonlinearAEMethod
+  hidden_multiplier: 4 # encoder/decoder hidden width = min(hidden_multiplier * k, latent dim)
+  epochs: 50
+  lr: 0.001
+  batch_size: 4096
+  seed: ${eval.seed}
