@@ -24,7 +24,7 @@ _METHOD_COLOR = {
     "sae": "#eda100",  # yellow
     "nonlinear_ae": "#e87ba4",  # magenta
 }
-_METRICS = ["RE", "FE", "MCE", "AE"]
+_METRICS = ["RE", "FE", "MCE", "AE", "L_g", "M"]
 
 
 def fetch_results(experiment_name: str) -> pd.DataFrame:
@@ -52,6 +52,13 @@ def fetch_results(experiment_name: str) -> pd.DataFrame:
         "metrics.MCE": "MCE",
         "metrics.AE": "AE",
         "metrics.MCE_leq_FE": "MCE_leq_FE",
+        "metrics.L_g": "L_g",
+        "metrics.L_g_ci_low": "L_g_ci_low",
+        "metrics.L_g_ci_high": "L_g_ci_high",
+        "metrics.M": "M",
+        "metrics.M_ci_low": "M_ci_low",
+        "metrics.M_ci_high": "M_ci_high",
+        "metrics.FE_leq_Lg2_RE": "FE_leq_Lg2_RE",
     }
     missing = [c for c in keep if c not in runs.columns]
     if missing:

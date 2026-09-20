@@ -6,3 +6,10 @@ probe:
   hidden_dim: 128
   epochs: 50
   lr: 0.001
+lipschitz:
+  # Sample-based estimates of L_g (Theorem 1) and M (Theorem 2); see
+  # concepts/metrics/lipschitz.py for what these do and do not guarantee.
+  num_trials: 20
+  pairs_per_trial: 2000
+  ci: 0.95
+  perturbation_scale: 0.01 # M only: local step size, relative to each row's own norm

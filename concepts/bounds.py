@@ -53,6 +53,22 @@ def main(config: DictConfig, logger: MLFlowLogger) -> None:
     )
     ae = metrics.mean_squared_attribution_error(pointwise_ae)
 
+    lipschitz_kwargs = {
+        "num_trials": config.eval.lipschitz.num_trials,
+        "pairs_per_trial": config.eval.lipschitz.pairs_per_trial,
+        "ci": config.eval.lipschitz.ci,
+        "seed": config.eval.seed,
+    }
+    l_g = metrics.estimate_g_lipschitz(decomposition, z_eval, **lipschitz_kwargs)
+    m = metrics.estimate_gamma_curvature(
+        decomposition,
+        autoencoder,
+        u_eval,
+        target_index,
+        perturbation_scale=config.eval.lipschitz.perturbation_scale,
+        **lipschitz_kwargs,
+    )
+
     results = {
         "RE": re.item(),
         "FE": fe.item(),
@@ -62,6 +78,16 @@ def main(config: DictConfig, logger: MLFlowLogger) -> None:
         # candidate in the infimum. A 0 here means the probe underfit relative
         # to that baseline, not that the bound itself failed.
         "MCE_leq_FE": float(mce.item() <= fe.item()),
+        "L_g": l_g.point,
+        "L_g_ci_low": l_g.ci_low,
+        "L_g_ci_high": l_g.ci_high,
+        "M": m.point,
+        "M_ci_low": m.ci_low,
+        "M_ci_high": m.ci_high,
+        # L_g/M are sample-based lower bounds on the true constants (see
+        # concepts/metrics/lipschitz.py), so a 0 here means the sampled L_g was
+        # too small to certify the bound -- not that Theorem 1 itself failed.
+        "FE_leq_Lg2_RE": float(fe.item() <= l_g.point**2 * re.item()),
     }
     logger.log_metrics(results)
 

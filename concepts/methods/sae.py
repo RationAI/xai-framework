@@ -27,8 +27,7 @@ class SAEConceptAutoencoder:
 
     def decode(self, u: ConceptBatch) -> LatentBatch:
         rows = to_rows(u)
-        with torch.no_grad():
-            z_hat = self.decoder(rows)
+        z_hat = self.decoder(rows)
         return from_rows(z_hat, u)
 
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
