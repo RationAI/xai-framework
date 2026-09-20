@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import hydra
+import torch
 from omegaconf import DictConfig, OmegaConf
 from rationai.mlkit import autolog
 from rationai.mlkit.lightning.loggers import MLFlowLogger
@@ -17,7 +18,9 @@ def main(config: DictConfig, logger: MLFlowLogger) -> None:
     manual_seed(config.eval.seed)
     logger.log_hyperparams(OmegaConf.to_container(config.metadata.hyperparams, resolve=True))
 
-    decomposition = hydra.utils.instantiate(config.model.decomposition)
+    device = config.device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    decomposition = hydra.utils.instantiate(config.model.decomposition).to(device)
     loader = hydra.utils.instantiate(config.data.loader)
 
     z, f_x, _labels = extract_and_cache_latents(
@@ -26,7 +29,11 @@ def main(config: DictConfig, logger: MLFlowLogger) -> None:
         cache_dir=f"{config.project_path}/cache",
         data_name=config.data.name,
         num_samples=config.data.num_samples,
+        device=device,
     )
+    # cache is always stored on cpu (see extract_and_cache_latents); move onto
+    # the run's device here so it applies on both a fresh extraction and a cache hit
+    z, f_x = z.to(device), f_x.to(device)
 
     num_fit = int(config.eval.fit_fraction * z.shape[0])
     z_fit, z_eval = z[:num_fit], z[num_fit:]

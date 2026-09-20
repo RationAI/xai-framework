@@ -4,6 +4,8 @@ defaults:
   - _self_
 
 project_path: /mnt/projects/xai_framework
+# null = auto-detect (cuda if available, else cpu); override with device=cpu/cuda to force one
+device: null
 
 metadata:
   experiment_name: XAI Framework

@@ -21,7 +21,7 @@ class MLPProbe:
             nn.Linear(u.shape[1], self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, targets.shape[1]),
-        )
+        ).to(u.device)
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
         for _ in range(self.epochs):
             optimizer.zero_grad()

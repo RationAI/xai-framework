@@ -19,7 +19,7 @@ def attribution_error(
     (the framework's f is scalar-valued) -- typically the predicted class.
     """
     n = u.shape[0]
-    rows = torch.arange(n)
+    rows = torch.arange(n, device=u.device)
 
     zero = torch.zeros_like(u[:1])
     baseline_full = decomposition.predict_from_latent(autoencoder.decode(zero))[
@@ -27,7 +27,7 @@ def attribution_error(
     ]  # [out_dim]
     baseline = baseline_full[target_index]  # [N]
 
-    contributions = torch.zeros(n)
+    contributions = torch.zeros(n, device=u.device)
     for i in range(autoencoder.num_concepts):
         u_i = autoencoder.zero_concept(u, i)
         gamma_i_full = decomposition.predict_from_latent(
