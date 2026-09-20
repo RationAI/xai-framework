@@ -16,9 +16,13 @@ from concepts.caching import extract_and_cache_latents
 @autolog
 def main(config: DictConfig, logger: MLFlowLogger) -> None:
     manual_seed(config.eval.seed)
-    logger.log_hyperparams(OmegaConf.to_container(config.metadata.hyperparams, resolve=True))
 
     device = config.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    hyperparams = OmegaConf.to_container(config.metadata.hyperparams, resolve=True)
+    hyperparams["device"] = device
+    if device == "cuda":
+        hyperparams["gpu_name"] = torch.cuda.get_device_name(0)
+    logger.log_hyperparams(hyperparams)
 
     decomposition = hydra.utils.instantiate(config.model.decomposition).to(device)
     loader = hydra.utils.instantiate(config.data.loader)
