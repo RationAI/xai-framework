@@ -7,11 +7,14 @@ readme = "README.md"
 license = { file = "LICENSE" }
 dependencies = [
     "torch>=2.9.0",
+    "torchvision>=0.20.0",
     "lightning>=2.4.0",
     "torchmetrics>=1.4.1",
     "mlflow<3.0",
     "rationai-sdk>=0.1.0",
     "rationai-mlkit",
+    "huggingface-hub>=1.32.0",
+    "scikit-learn>=1.4",
 ]
 
 [project.optional-dependencies]
