@@ -75,8 +75,12 @@ def estimate_lipschitz(
     trial_maxima = []
     all_ratios = []
     for _ in range(num_trials):
-        idx_a = torch.randint(0, n, (pairs_per_trial,), generator=generator)
-        offset = torch.randint(1, n, (pairs_per_trial,), generator=generator)
+        idx_a = torch.randint(0, n, (pairs_per_trial,), generator=generator).to(
+            inputs.device
+        )
+        offset = torch.randint(1, n, (pairs_per_trial,), generator=generator).to(
+            inputs.device
+        )
         idx_b = (idx_a + offset) % n  # offset in [1,n) guarantees idx_a != idx_b
         ratios = _ratios(inputs[idx_a], outputs[idx_a], inputs[idx_b], outputs[idx_b])
         if ratios.numel() == 0:
@@ -108,7 +112,7 @@ def _grad_at(
 ) -> Tensor:
     v = v.detach().clone().requires_grad_(True)
     out = decomposition.predict_from_latent(autoencoder.decode(v))
-    rows = torch.arange(v.shape[0])
+    rows = torch.arange(v.shape[0], device=v.device)
     scalar_out = out[rows, target_index]
     (grad_v,) = torch.autograd.grad(scalar_out.sum(), v)
     return grad_v.detach()
@@ -150,15 +154,17 @@ def estimate_gamma_curvature(
     trial_maxima = []
     all_ratios = []
     for _ in range(num_trials):
-        idx = torch.randint(0, n, (pairs_per_trial,), generator=generator)
-        direction = torch.randn((pairs_per_trial, u.shape[1]), generator=generator)
+        idx = torch.randint(0, n, (pairs_per_trial,), generator=generator).to(u.device)
+        u_idx = u[idx]
+        u_idx_flat = u_idx.flatten(1)  # matches u's real shape, spatial or not
+        direction = torch.randn(u_idx_flat.shape, generator=generator).to(u.device)
         direction = direction / direction.norm(dim=1, keepdim=True).clamp_min(1e-12)
-        step = perturbation_scale * (u[idx].norm(dim=1, keepdim=True) + 1e-6)
-        u_perturbed = u[idx] + step * direction
+        step = perturbation_scale * (u_idx_flat.norm(dim=1, keepdim=True) + 1e-6)
+        u_perturbed = u_idx + (step * direction).view_as(u_idx)
         grad_perturbed = _grad_at(
             decomposition, autoencoder, u_perturbed, target_index[idx]
         )
-        ratios = _ratios(u[idx], grad_base[idx], u_perturbed, grad_perturbed)
+        ratios = _ratios(u_idx, grad_base[idx], u_perturbed, grad_perturbed)
         if ratios.numel() == 0:
             continue
         trial_maxima.append(ratios.max())
