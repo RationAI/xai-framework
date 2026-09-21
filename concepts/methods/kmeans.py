@@ -1,7 +1,7 @@
 import torch
 from sklearn.cluster import KMeans as SKKMeans
 
-from concepts.methods.common import from_rows, to_rows, zero_all_but
+from concepts.methods.common import apply_batched, from_rows, to_rows, zero_all_but
 from concepts.typing import ConceptBatch, LatentBatch
 
 
@@ -12,20 +12,27 @@ class KMeansConceptAutoencoder:
     it's a useful contrast baseline rather than a strong one.
     """
 
-    def __init__(self, centroids: LatentBatch, bandwidth: float) -> None:
+    def __init__(
+        self, centroids: LatentBatch, bandwidth: float, batch_size: int = 4096
+    ) -> None:
         self.centroids = centroids  # [k, C]
         self.bandwidth = bandwidth
         self.num_concepts = centroids.shape[0]
+        self.batch_size = batch_size
 
     def encode(self, z: LatentBatch) -> ConceptBatch:
         rows = to_rows(z)
-        dist_sq = torch.cdist(rows, self.centroids) ** 2
-        u = torch.exp(-dist_sq / (2 * self.bandwidth**2))
+
+        def _rbf(chunk: torch.Tensor) -> torch.Tensor:
+            dist_sq = torch.cdist(chunk, self.centroids) ** 2
+            return torch.exp(-dist_sq / (2 * self.bandwidth**2))
+
+        u = apply_batched(_rbf, rows, self.batch_size)
         return from_rows(u, z)
 
     def decode(self, u: ConceptBatch) -> LatentBatch:
         rows = to_rows(u)
-        z = rows @ self.centroids
+        z = apply_batched(lambda r: r @ self.centroids, rows, self.batch_size)
         return from_rows(z, u)
 
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
@@ -33,8 +40,9 @@ class KMeansConceptAutoencoder:
 
 
 class KMeansMethod:
-    def __init__(self, seed: int = 0) -> None:
+    def __init__(self, seed: int = 0, batch_size: int = 4096) -> None:
         self.seed = seed
+        self.batch_size = batch_size
 
     def fit(self, z: LatentBatch, num_concepts: int) -> KMeansConceptAutoencoder:
         rows = to_rows(z)
@@ -42,4 +50,6 @@ class KMeansMethod:
         model.fit(rows.detach().cpu().numpy())
         centroids = torch.from_numpy(model.cluster_centers_).to(rows)
         bandwidth = (model.inertia_ / rows.shape[0]) ** 0.5
-        return KMeansConceptAutoencoder(centroids=centroids, bandwidth=bandwidth)
+        return KMeansConceptAutoencoder(
+            centroids=centroids, bandwidth=bandwidth, batch_size=self.batch_size
+        )

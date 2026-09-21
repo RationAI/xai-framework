@@ -5,3 +5,4 @@ decomposition:
   architecture: vgg16
   weights: IMAGENET1K_V1
   boundary: penultimate # only boundary supported for vgg so far
+  batch_size: 256 # chunk size for g's forward pass

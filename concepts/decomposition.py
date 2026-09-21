@@ -72,7 +72,12 @@ class TorchvisionDecomposition(nn.Module):
     """
 
     def __init__(
-        self, name: str, architecture: str, weights: str, boundary: str = "penultimate"
+        self,
+        name: str,
+        architecture: str,
+        weights: str,
+        boundary: str = "penultimate",
+        batch_size: int = 256,
     ) -> None:
         super().__init__()
         if architecture not in _BOUNDARY_BUILDERS:
@@ -82,6 +87,7 @@ class TorchvisionDecomposition(nn.Module):
 
         self.name = name
         self.boundary = boundary
+        self.batch_size = batch_size
 
         weights_enum = get_model_weights(architecture)[weights]
         backbone = get_model(architecture, weights=weights_enum).eval()
@@ -97,7 +103,13 @@ class TorchvisionDecomposition(nn.Module):
         return self.h(x)["z"]
 
     def predict_from_latent(self, z: LatentBatch) -> OutputBatch:
-        return self.g(z)
+        """Runs g in chunks of `batch_size` samples (conv tail activations get huge
+        otherwise, e.g. for spatial layer1-4 boundaries on a whole eval split at
+        once). Uses torch.split/cat, so this stays autograd-compatible for callers
+        that need gradients through g (see estimate_gamma_curvature)."""
+        if z.shape[0] <= self.batch_size:
+            return self.g(z)
+        return torch.cat([self.g(chunk) for chunk in z.split(self.batch_size)], dim=0)
 
     def forward(self, x: Tensor) -> OutputBatch:
         return self.predict_from_latent(self.extract_latents(x))

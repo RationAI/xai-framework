@@ -1,3 +1,4 @@
 name: pca
 extractor:
   _target_: concepts.methods.pca.PCAMethod
+  batch_size: 4096

@@ -48,8 +48,12 @@ def main(config: DictConfig, logger: MLFlowLogger) -> None:
 
     u_fit = autoencoder.encode(z_fit)
     u_eval = autoencoder.encode(z_eval)
-    z_hat_eval = autoencoder.decode(u_eval)
-    f_a_eval = decomposition.predict_from_latent(z_hat_eval)
+    # no_grad: decode/predict_from_latent build a backward graph through g whenever
+    # the method has learnable decoder weights (SAE/NonlinearAE), even though
+    # nothing here calls .backward() -- that's pure wasted activation memory.
+    with torch.no_grad():
+        z_hat_eval = autoencoder.decode(u_eval)
+        f_a_eval = decomposition.predict_from_latent(z_hat_eval)
 
     re = metrics.reconstruction_error(z_eval, z_hat_eval)
     fe = metrics.fidelity_error(f_eval, f_a_eval)

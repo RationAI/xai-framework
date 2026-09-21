@@ -2,7 +2,7 @@ import torch
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from concepts.methods.common import from_rows, to_rows, zero_all_but
+from concepts.methods.common import apply_batched, from_rows, to_rows, zero_all_but
 from concepts.typing import ConceptBatch, LatentBatch
 
 
@@ -14,20 +14,23 @@ class SAEConceptAutoencoder:
     (M=0) case of the attribution bound (Theorem 2), unlike NonlinearAE.
     """
 
-    def __init__(self, encoder: nn.Sequential, decoder: nn.Linear) -> None:
+    def __init__(
+        self, encoder: nn.Sequential, decoder: nn.Linear, batch_size: int = 4096
+    ) -> None:
         self.encoder = encoder
         self.decoder = decoder
         self.num_concepts = decoder.in_features
+        self.batch_size = batch_size
 
     def encode(self, z: LatentBatch) -> ConceptBatch:
         rows = to_rows(z)
         with torch.no_grad():
-            u = self.encoder(rows)
+            u = apply_batched(self.encoder, rows, self.batch_size)
         return from_rows(u, z)
 
     def decode(self, u: ConceptBatch) -> LatentBatch:
         rows = to_rows(u)
-        z_hat = self.decoder(rows)
+        z_hat = apply_batched(self.decoder, rows, self.batch_size)
         return from_rows(z_hat, u)
 
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
@@ -89,4 +92,6 @@ class SAEMethod:
 
         encoder.eval()
         decoder.eval()
-        return SAEConceptAutoencoder(encoder=encoder, decoder=decoder)
+        return SAEConceptAutoencoder(
+            encoder=encoder, decoder=decoder, batch_size=self.batch_size
+        )

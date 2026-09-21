@@ -1,5 +1,20 @@
+from collections.abc import Callable
+
 import torch
 from torch import Tensor
+
+
+def apply_batched(fn: Callable[[Tensor], Tensor], rows: Tensor, batch_size: int) -> Tensor:
+    """Applies `fn` to `rows` in chunks along dim 0, concatenating the results.
+
+    Bounds peak memory for row counts that can be far larger than the number
+    of samples (`to_rows` turns spatial [N,C,H,W] latents into [N*H*W, C]).
+    Uses `torch.split`/`torch.cat`, so gradients still flow through to `rows`
+    when `fn` is used inside an autograd graph (see `estimate_gamma_curvature`).
+    """
+    if rows.shape[0] <= batch_size:
+        return fn(rows)
+    return torch.cat([fn(chunk) for chunk in rows.split(batch_size)], dim=0)
 
 
 def to_rows(z: Tensor) -> Tensor:

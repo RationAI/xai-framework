@@ -2,3 +2,4 @@ name: kmeans
 extractor:
   _target_: concepts.methods.kmeans.KMeansMethod
   seed: ${eval.seed}
+  batch_size: 4096
