@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import hydra
+import mlflow
 import torch
 from omegaconf import DictConfig, OmegaConf
 from rationai.mlkit import autolog
@@ -15,6 +16,22 @@ from concepts.caching import extract_and_cache_latents
 @hydra.main(config_path="../configs", config_name="concepts", version_base=None)
 @autolog
 def main(config: DictConfig, logger: MLFlowLogger) -> None:
+    try:
+        _run(config, logger)
+    except Exception:
+        # Hydra multirun runs every job sequentially in one process; MLflow's
+        # fluent API only allows one active run per process, so the next job's
+        # mlflow.start_run() would fail with "already active" unless this run
+        # is explicitly ended here (a single non-multirun job gets away without
+        # this because the process exits right after, and mlflow's atexit hook
+        # closes the dangling run silently).
+        mlflow.end_run(status="FAILED")
+        raise
+    else:
+        mlflow.end_run(status="FINISHED")
+
+
+def _run(config: DictConfig, logger: MLFlowLogger) -> None:
     manual_seed(config.eval.seed)
 
     device = config.device or ("cuda" if torch.cuda.is_available() else "cpu")
