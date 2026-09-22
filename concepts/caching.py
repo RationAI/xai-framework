@@ -34,19 +34,30 @@ def extract_and_cache_latents(
         return cached["z"], cached["logits"], cached["labels"]
 
     decomposition = decomposition.to(device)
-    all_z, all_logits, all_labels = [], [], []
+    total = len(loader.dataset)  # type: ignore[arg-type]
+    z = logits = labels = None
+    offset = 0
     with torch.no_grad():
-        for images, labels in tqdm(loader, desc="extracting latents"):
+        for images, batch_labels in tqdm(loader, desc="extracting latents"):
             images = images.to(device)
-            z = decomposition.extract_latents(images)
-            logits = decomposition.predict_from_latent(z)
-            all_z.append(z.cpu())
-            all_logits.append(logits.cpu())
-            all_labels.append(labels)
-
-    z = torch.cat(all_z)
-    logits = torch.cat(all_logits)
-    labels = torch.cat(all_labels)
+            batch_z = decomposition.extract_latents(images)
+            batch_logits = decomposition.predict_from_latent(batch_z)
+            if z is None:
+                # allocated once total/shapes are known, and filled in place --
+                # avoids the list-of-batches + torch.cat pattern, which briefly
+                # needs both the full list AND a freshly concatenated copy
+                # alive at once (2x peak on top of the already-large z, e.g.
+                # ~20GB each way for a full-split run at a spatial boundary)
+                z = torch.empty((total, *batch_z.shape[1:]), dtype=batch_z.dtype)
+                logits = torch.empty(
+                    (total, *batch_logits.shape[1:]), dtype=batch_logits.dtype
+                )
+                labels = torch.empty((total, *batch_labels.shape[1:]), dtype=batch_labels.dtype)
+            n = batch_z.shape[0]
+            z[offset : offset + n] = batch_z.cpu()
+            logits[offset : offset + n] = batch_logits.cpu()
+            labels[offset : offset + n] = batch_labels
+            offset += n
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"z": z, "logits": logits, "labels": labels}, cache_path)
