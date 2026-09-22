@@ -1,5 +1,6 @@
 import io
 from bisect import bisect_right
+from collections import OrderedDict
 from glob import glob
 from itertools import accumulate
 from typing import Any
@@ -17,15 +18,25 @@ class _ParquetImageDataset(Dataset[tuple[torch.Tensor, int]]):
     """Reads a HF-style parquet-sharded image dataset (columns: image{bytes,path}, label).
 
     Each shard is read and cached in full on first access to the shard, rather
-    than row-by-row, since parquet doesn't support cheap single-row reads.
+    than row-by-row, since parquet doesn't support cheap single-row reads. The
+    cache is bounded to `max_cached_shards` (LRU eviction): callers should
+    prefer visiting indices in on-disk (sorted) order, e.g. via `subsample`,
+    since a scattered access pattern across many shards will otherwise thrash
+    -- re-reading whole shards (hundreds of MB each) repeatedly.
     """
 
-    def __init__(self, shard_paths: list[str], transform: transforms.Compose) -> None:
+    def __init__(
+        self,
+        shard_paths: list[str],
+        transform: transforms.Compose,
+        max_cached_shards: int = 2,
+    ) -> None:
         self.shard_paths = shard_paths
         self.transform = transform
         self._row_counts = [pq.ParquetFile(p).metadata.num_rows for p in shard_paths]
         self._offsets = list(accumulate([0, *self._row_counts]))
-        self._shard_cache: dict[int, list[dict[str, Any]]] = {}
+        self._max_cached_shards = max_cached_shards
+        self._shard_cache: OrderedDict[int, list[dict[str, Any]]] = OrderedDict()
 
     def __len__(self) -> int:
         return self._offsets[-1]
@@ -34,11 +45,15 @@ class _ParquetImageDataset(Dataset[tuple[torch.Tensor, int]]):
         shard_idx = bisect_right(self._offsets, idx) - 1
         local_idx = idx - self._offsets[shard_idx]
 
-        if shard_idx not in self._shard_cache:
+        if shard_idx in self._shard_cache:
+            self._shard_cache.move_to_end(shard_idx)
+        else:
             table = pq.read_table(
                 self.shard_paths[shard_idx], columns=["image", "label"]
             )
             self._shard_cache[shard_idx] = table.to_pylist()
+            if len(self._shard_cache) > self._max_cached_shards:
+                self._shard_cache.popitem(last=False)
 
         row = self._shard_cache[shard_idx][local_idx]
         image = Image.open(io.BytesIO(row["image"]["bytes"])).convert("RGB")

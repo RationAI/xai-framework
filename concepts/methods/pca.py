@@ -45,7 +45,10 @@ class PCAMethod:
         rows = to_rows(z)
         mean = rows.mean(dim=0)
         centered = rows - mean
-        _, _, v = torch.pca_lowrank(centered, q=min(num_concepts, centered.shape[1]))
+        del rows
+        _, _, v = torch.pca_lowrank(
+            centered, q=min(num_concepts, centered.shape[1]), center=False
+        )
         components = v[:, :num_concepts].T
         return PCAConceptAutoencoder(
             mean=mean, components=components, batch_size=self.batch_size

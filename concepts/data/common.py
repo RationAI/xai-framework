@@ -17,4 +17,8 @@ def subsample(
         return dataset
     generator = Generator().manual_seed(seed)
     indices = randperm(size, generator=generator)[:num_samples].tolist()
-    return Subset(dataset, indices)
+    # Sorted so a shuffle=False loader visits chunked/sharded datasets (e.g.
+    # the parquet-backed imagenet loader) in on-disk order -- selection stays
+    # a uniform random subsample, only the visiting order changes, but that
+    # keeps per-shard access grouped instead of scattered across every shard.
+    return Subset(dataset, sorted(indices))
