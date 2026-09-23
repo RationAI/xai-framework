@@ -67,8 +67,8 @@ class SAEMethod:
             nn.ReLU(),
             nn.Linear(hidden, num_concepts),
             nn.ReLU(),
-        )
-        decoder = nn.Linear(num_concepts, d)
+        ).to(rows.device)
+        decoder = nn.Linear(num_concepts, d).to(rows.device)
 
         optimizer = torch.optim.Adam(
             [*encoder.parameters(), *decoder.parameters()], lr=self.lr

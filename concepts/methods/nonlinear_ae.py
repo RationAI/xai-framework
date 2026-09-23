@@ -65,12 +65,12 @@ class NonlinearAEMethod:
             nn.ReLU(),
             nn.Linear(hidden, num_concepts),
             nn.ReLU(),
-        )
+        ).to(rows.device)
         decoder = nn.Sequential(
             nn.Linear(num_concepts, hidden),
             nn.ReLU(),
             nn.Linear(hidden, d),
-        )
+        ).to(rows.device)
 
         optimizer = torch.optim.Adam(
             [*encoder.parameters(), *decoder.parameters()], lr=self.lr
