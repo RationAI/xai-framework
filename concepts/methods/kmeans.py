@@ -6,7 +6,13 @@ from concepts.typing import ConceptBatch, LatentBatch
 
 
 class KMeansConceptAutoencoder:
-    """Concept i's activation is an RBF similarity to centroid i; decode is linear.
+    """Concept i's activation is the soft assignment to centroid i; decode is linear.
+
+    Activations are the posterior of an isotropic equal-weight Gaussian mixture
+    centred on the centroids (softmax over -||z - c_i||^2 / 2 sigma^2), so they
+    sum to 1 and decode is a convex combination of centroids. Normalizing here
+    rather than in decode keeps concept i's contribution u_i * c_i, which is what
+    zero_concept-based attribution relies on.
 
     Unlike PCA/NMF, this reconstruction isn't fit to minimize RE directly, so
     it's a useful contrast baseline rather than a strong one.
@@ -19,15 +25,16 @@ class KMeansConceptAutoencoder:
         self.bandwidth = bandwidth
         self.num_concepts = centroids.shape[0]
         self.batch_size = batch_size
+        self.affine_decoder = True
 
     def encode(self, z: LatentBatch) -> ConceptBatch:
         rows = to_rows(z)
 
-        def _rbf(chunk: torch.Tensor) -> torch.Tensor:
+        def _soft_assign(chunk: torch.Tensor) -> torch.Tensor:
             dist_sq = torch.cdist(chunk, self.centroids) ** 2
-            return torch.exp(-dist_sq / (2 * self.bandwidth**2))
+            return torch.softmax(-dist_sq / (2 * self.bandwidth**2), dim=-1)
 
-        u = apply_batched(_rbf, rows, self.batch_size)
+        u = apply_batched(_soft_assign, rows, self.batch_size)
         return from_rows(u, z)
 
     def decode(self, u: ConceptBatch) -> LatentBatch:
@@ -49,7 +56,9 @@ class KMeansMethod:
         model = SKKMeans(n_clusters=num_concepts, n_init="auto", random_state=self.seed)
         model.fit(rows.detach().cpu().numpy())
         centroids = torch.from_numpy(model.cluster_centers_).to(rows)
-        bandwidth = (model.inertia_ / rows.shape[0]) ** 0.5
+        # Per-dimension within-cluster std (isotropic Gaussian sigma), not the
+        # total distance to the centroid, which would be sqrt(C) times wider.
+        bandwidth = (model.inertia_ / rows.numel()) ** 0.5
         return KMeansConceptAutoencoder(
             centroids=centroids, bandwidth=bandwidth, batch_size=self.batch_size
         )
