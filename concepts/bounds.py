@@ -11,6 +11,7 @@ from torch import manual_seed
 
 from concepts import metrics
 from concepts.caching import extract_and_cache_latents
+from concepts.probes.decoded_head import AffineDecodedHead
 
 
 @hydra.main(config_path="../configs", config_name="concepts", version_base=None)
@@ -60,6 +61,10 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
     z_fit, z_eval = z[:num_fit], z[num_fit:]
     f_fit, f_eval = f_x[:num_fit], f_x[num_fit:]
 
+    # Reseed: a fresh latent extraction (cache miss) consumes global RNG draws in
+    # the DataLoader that a cache hit does not, which would otherwise make
+    # randomized fits (e.g. torch.pca_lowrank) depend on the cache state.
+    manual_seed(config.eval.seed)
     method = hydra.utils.instantiate(config.method.extractor)
     autoencoder = method.fit(z_fit, config.eval.num_concepts)
 
@@ -71,19 +76,46 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
     with torch.no_grad():
         z_hat_eval = autoencoder.decode(u_eval)
         f_a_eval = decomposition.predict_from_latent(z_hat_eval)
+        f_a_fit = decomposition.predict_from_latent(autoencoder.decode(u_fit))
 
     re = metrics.reconstruction_error(z_eval, z_hat_eval)
     fe = metrics.fidelity_error(f_eval, f_a_eval)
 
-    probe = hydra.utils.instantiate(config.eval.probe)
-    probe.fit(u_fit, f_fit)
-    mce = metrics.model_completeness_error(probe(u_eval), f_eval)
+    # MCE is an infimum over all heads gamma; each fitted head only gives an
+    # upper bound on it, so these are reported as MCE_UB_*, never as MCE itself.
+    #   mlp:      MLP on u from random init.
+    #   residual: g o D + an MLP correction starting at zero.
+    #   gD:       g' o D' refit from g o D -- closed-form least squares when D is
+    #             affine (the family is then exactly the affine maps of pooled u),
+    #             gradient fine-tuning when D is nonlinear.
+    probes = config.eval.probes
+    mlp = hydra.utils.instantiate(probes.mlp).fit(u_fit, f_fit)
+    residual = hydra.utils.instantiate(probes.residual).fit(u_fit, f_a_fit, f_fit)
+    if autoencoder.affine_decoder:
+        gd_head = AffineDecodedHead().fit(u_fit, f_fit)
+    else:
+        gd_head = hydra.utils.instantiate(probes.finetuned_gD).fit(
+            u_fit, f_fit, autoencoder.decoder, decomposition.g
+        )
+    mce_ub = {
+        "mlp": metrics.model_completeness_error(mlp(u_eval), f_eval),
+        "residual": metrics.model_completeness_error(
+            residual(u_eval, f_a_eval), f_eval
+        ),
+        "gD": metrics.model_completeness_error(gd_head(u_eval), f_eval),
+    }
 
+    # Attribution completeness is stated for a scalar output (N=1): each sample
+    # explains its predicted class, so FE/ATE/ADD below are all at target_index.
     target_index = f_eval.argmax(dim=-1)
-    pointwise_ae = metrics.attribution_error(
-        decomposition, autoencoder, f_eval, u_eval, target_index
+    rows = torch.arange(f_eval.shape[0], device=f_eval.device)
+    f_target, f_a_target = f_eval[rows, target_index], f_a_eval[rows, target_index]
+    total_attribution = metrics.insertion_total_attribution(
+        decomposition, autoencoder, u_eval, target_index
     )
-    ae = metrics.mean_squared_attribution_error(pointwise_ae)
+    fe_target = torch.mean((f_target - f_a_target) ** 2)
+    ate = torch.mean((f_target - total_attribution) ** 2)
+    add = torch.mean((f_a_target - total_attribution) ** 2)
 
     lipschitz_kwargs = {
         "num_trials": config.eval.lipschitz.num_trials,
@@ -91,7 +123,11 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         "ci": config.eval.lipschitz.ci,
         "seed": config.eval.seed,
     }
-    l_g = metrics.estimate_g_lipschitz(decomposition, z_eval, **lipschitz_kwargs)
+    l_g = metrics.exact_g_lipschitz(decomposition, z_eval.shape)
+    # Sampled L_g is a lower bound on the exact one; kept only as a sanity check.
+    l_g_sampled = metrics.estimate_g_lipschitz(
+        decomposition, z_eval, **lipschitz_kwargs
+    )
     m = metrics.estimate_gamma_curvature(
         decomposition,
         autoencoder,
@@ -100,26 +136,60 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         perturbation_scale=config.eval.lipschitz.perturbation_scale,
         **lipschitz_kwargs,
     )
+    c4_root = metrics.representation_fourth_moment_root(u_eval).item()
 
-    results = {
+    # Errors in the paper are RMSEs; the MSE (squared) versions are logged too.
+    errors_mse = {
         "RE": re.item(),
         "FE": fe.item(),
-        "MCE": mce.item(),
-        "AE": ae.item(),
-        # Theorem 1 guarantees MCE <= FE for any probe, since gamma=g o D is one
-        # candidate in the infimum. A 0 here means the probe underfit relative
-        # to that baseline, not that the bound itself failed.
-        "MCE_leq_FE": float(mce.item() <= fe.item()),
-        "L_g": l_g.point,
-        "L_g_ci_low": l_g.ci_low,
-        "L_g_ci_high": l_g.ci_high,
+        **{f"MCE_UB_{name}": value.item() for name, value in mce_ub.items()},
+        "FE_target": fe_target.item(),
+        "ATE": ate.item(),
+        "ADD": add.item(),
+    }
+    errors_rmse = {name: value**0.5 for name, value in errors_mse.items()}
+    # Right-hand sides of the bounds, in RMSE form:
+    #   FE <= L_g RE (Theorem 1), ADD <= M sqrt(E||C||^4) (Theorem 2),
+    #   ATE <= FE + ADD bound (Corollary, with the scalar FE at target_index).
+    # M is sample-based (a lower bound on the true constant), so the two
+    # attribution bounds are estimates; the FE bound uses the exact L_g.
+    bounds_rmse = {
+        "FE_bound": l_g * errors_rmse["RE"],
+        "ADD_bound": m.point * c4_root,
+    }
+    bounds_rmse["ATE_bound"] = errors_rmse["FE_target"] + bounds_rmse["ADD_bound"]
+
+    # float32 slack for the checks below: e.g. an affine gamma gives M = 0 and
+    # ADD = 0 in exact arithmetic, but ADD comes out ~1e-7 numerically.
+    tolerance = 1e-5 * f_target.pow(2).mean().sqrt().item()
+
+    def leq(lhs: float, rhs: float) -> float:
+        return float(lhs <= rhs + tolerance)
+
+    results = {
+        **{f"{name}_MSE": value for name, value in errors_mse.items()},
+        **{f"{name}_RMSE": value for name, value in errors_rmse.items()},
+        **{f"{name}_MSE": value**2 for name, value in bounds_rmse.items()},
+        **{f"{name}_RMSE": value for name, value in bounds_rmse.items()},
+        "L_g": l_g,
+        "L_g_sampled": l_g_sampled.point,
+        "L_g_sampled_ci_low": l_g_sampled.ci_low,
+        "L_g_sampled_ci_high": l_g_sampled.ci_high,
         "M": m.point,
         "M_ci_low": m.ci_low,
         "M_ci_high": m.ci_high,
-        # L_g/M are sample-based lower bounds on the true constants (see
-        # concepts/metrics/lipschitz.py), so a 0 here means the sampled L_g was
-        # too small to certify the bound -- not that Theorem 1 itself failed.
-        "FE_leq_Lg2_RE": float(fe.item() <= l_g.point**2 * re.item()),
+        "C4_root": c4_root,
+        "FE_leq_bound": leq(errors_rmse["FE"], bounds_rmse["FE_bound"]),
+        # MCE <= FE holds by Proposition (g o D is one admissible head); a 0 here
+        # only means that head did worse than g o D, not that the bound failed.
+        **{
+            f"MCE_UB_{name}_leq_FE": leq(
+                errors_rmse[f"MCE_UB_{name}"], errors_rmse["FE"]
+            )
+            for name in mce_ub
+        },
+        "ADD_leq_bound": leq(errors_rmse["ADD"], bounds_rmse["ADD_bound"]),
+        "ATE_leq_bound": leq(errors_rmse["ATE"], bounds_rmse["ATE_bound"]),
     }
     logger.log_metrics(results)
 
