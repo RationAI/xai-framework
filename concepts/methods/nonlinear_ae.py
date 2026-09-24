@@ -1,3 +1,5 @@
+from typing import Self
+
 import torch
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -37,6 +39,11 @@ class NonlinearAEConceptAutoencoder:
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
         return zero_all_but(u, index)
 
+    def to(self, device: torch.device | str) -> Self:
+        self.encoder = self.encoder.to(device)
+        self.decoder = self.decoder.to(device)
+        return self
+
 
 class NonlinearAEMethod:
     def __init__(
@@ -53,10 +60,17 @@ class NonlinearAEMethod:
         self.batch_size = batch_size
         self.seed = seed
 
-    def fit(self, z: LatentBatch, num_concepts: int) -> NonlinearAEConceptAutoencoder:
+    def fit(
+        self,
+        z: LatentBatch,
+        num_concepts: int,
+        device: torch.device | str | None = None,
+    ) -> NonlinearAEConceptAutoencoder:
         generator = torch.Generator().manual_seed(self.seed)
         torch.manual_seed(self.seed)
 
+        # rows stay where z is (possibly cpu); only mini-batches go to `device`
+        device = device or z.device
         rows = to_rows(z)
         d = rows.shape[1]
         hidden = min(self.hidden_multiplier * num_concepts, d)
@@ -66,12 +80,12 @@ class NonlinearAEMethod:
             nn.ReLU(),
             nn.Linear(hidden, num_concepts),
             nn.ReLU(),
-        ).to(rows.device)
+        ).to(device)
         decoder = nn.Sequential(
             nn.Linear(num_concepts, hidden),
             nn.ReLU(),
             nn.Linear(hidden, d),
-        ).to(rows.device)
+        ).to(device)
 
         optimizer = torch.optim.Adam(
             [*encoder.parameters(), *decoder.parameters()], lr=self.lr
@@ -84,6 +98,7 @@ class NonlinearAEMethod:
         )
         for _ in range(self.epochs):
             for (batch,) in loader:
+                batch = batch.to(device)
                 optimizer.zero_grad()
                 z_hat = decoder(encoder(batch))
                 loss = torch.sum((z_hat - batch) ** 2, dim=-1).mean()

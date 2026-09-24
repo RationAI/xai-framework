@@ -1,3 +1,5 @@
+from typing import Self
+
 import torch
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -37,6 +39,11 @@ class SAEConceptAutoencoder:
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
         return zero_all_but(u, index)
 
+    def to(self, device: torch.device | str) -> Self:
+        self.encoder = self.encoder.to(device)
+        self.decoder = self.decoder.to(device)
+        return self
+
 
 class SAEMethod:
     def __init__(
@@ -55,10 +62,17 @@ class SAEMethod:
         self.batch_size = batch_size
         self.seed = seed
 
-    def fit(self, z: LatentBatch, num_concepts: int) -> SAEConceptAutoencoder:
+    def fit(
+        self,
+        z: LatentBatch,
+        num_concepts: int,
+        device: torch.device | str | None = None,
+    ) -> SAEConceptAutoencoder:
         generator = torch.Generator().manual_seed(self.seed)
         torch.manual_seed(self.seed)
 
+        # rows stay where z is (possibly cpu); only mini-batches go to `device`
+        device = device or z.device
         rows = to_rows(z)
         d = rows.shape[1]
         hidden = min(self.hidden_multiplier * num_concepts, d)
@@ -68,8 +82,8 @@ class SAEMethod:
             nn.ReLU(),
             nn.Linear(hidden, num_concepts),
             nn.ReLU(),
-        ).to(rows.device)
-        decoder = nn.Linear(num_concepts, d).to(rows.device)
+        ).to(device)
+        decoder = nn.Linear(num_concepts, d).to(device)
 
         optimizer = torch.optim.Adam(
             [*encoder.parameters(), *decoder.parameters()], lr=self.lr
@@ -82,6 +96,7 @@ class SAEMethod:
         )
         for _ in range(self.epochs):
             for (batch,) in loader:
+                batch = batch.to(device)
                 optimizer.zero_grad()
                 u = encoder(batch)
                 z_hat = decoder(u)

@@ -1,3 +1,5 @@
+from typing import Self
+
 import torch
 from sklearn.cluster import KMeans as SKKMeans
 
@@ -45,13 +47,22 @@ class KMeansConceptAutoencoder:
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
         return zero_all_but(u, index)
 
+    def to(self, device: torch.device | str) -> Self:
+        self.centroids = self.centroids.to(device)
+        return self
+
 
 class KMeansMethod:
     def __init__(self, seed: int = 0, batch_size: int = 4096) -> None:
         self.seed = seed
         self.batch_size = batch_size
 
-    def fit(self, z: LatentBatch, num_concepts: int) -> KMeansConceptAutoencoder:
+    def fit(
+        self,
+        z: LatentBatch,
+        num_concepts: int,
+        device: torch.device | str | None = None,
+    ) -> KMeansConceptAutoencoder:
         rows = to_rows(z)
         model = SKKMeans(n_clusters=num_concepts, n_init="auto", random_state=self.seed)
         model.fit(rows.detach().cpu().numpy())
@@ -61,4 +72,4 @@ class KMeansMethod:
         bandwidth = (model.inertia_ / rows.numel()) ** 0.5
         return KMeansConceptAutoencoder(
             centroids=centroids, bandwidth=bandwidth, batch_size=self.batch_size
-        )
+        ).to(device or z.device)

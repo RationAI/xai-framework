@@ -9,6 +9,7 @@ from torchvision.models.feature_extraction import (
     get_graph_node_names,
 )
 
+from concepts.methods.common import apply_batched
 from concepts.typing import LatentBatch, OutputBatch
 
 
@@ -102,14 +103,20 @@ class TorchvisionDecomposition(nn.Module):
     def extract_latents(self, x: Tensor) -> LatentBatch:
         return self.h(x)["z"]
 
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
     def predict_from_latent(self, z: LatentBatch) -> OutputBatch:
-        """Runs g in chunks of `batch_size` samples (conv tail activations get huge
-        otherwise, e.g. for spatial layer1-4 boundaries on a whole eval split at
-        once). Uses torch.split/cat, so this stays autograd-compatible for callers
-        that need gradients through g (see estimate_gamma_curvature)."""
-        if z.shape[0] <= self.batch_size:
-            return self.g(z)
-        return torch.cat([self.g(chunk) for chunk in z.split(self.batch_size)], dim=0)
+        """Runs g in chunks of `batch_size` samples, on this module's device.
+
+        Chunking bounds memory (conv tail activations get huge otherwise, e.g.
+        for spatial layer1-4 boundaries on a whole eval split at once). Each
+        chunk's result comes back on `z`'s device, so `z` may stay on cpu while
+        g runs on the gpu. Uses torch.split/cat, so this stays autograd-compatible
+        for callers that need gradients through g (see estimate_gamma_curvature).
+        """
+        return apply_batched(self.g, z, self.batch_size, device=self.device)
 
     def forward(self, x: Tensor) -> OutputBatch:
         return self.predict_from_latent(self.extract_latents(x))

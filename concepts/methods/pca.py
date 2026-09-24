@@ -1,3 +1,5 @@
+from typing import Self
+
 import torch
 
 from concepts.methods.common import apply_batched, from_rows, to_rows, zero_all_but
@@ -37,12 +39,22 @@ class PCAConceptAutoencoder:
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
         return zero_all_but(u, index)
 
+    def to(self, device: torch.device | str) -> Self:
+        self.mean = self.mean.to(device)
+        self.components = self.components.to(device)
+        return self
+
 
 class PCAMethod:
     def __init__(self, batch_size: int = 4096) -> None:
         self.batch_size = batch_size
 
-    def fit(self, z: LatentBatch, num_concepts: int) -> PCAConceptAutoencoder:
+    def fit(
+        self,
+        z: LatentBatch,
+        num_concepts: int,
+        device: torch.device | str | None = None,
+    ) -> PCAConceptAutoencoder:
         rows = to_rows(z)
         mean = rows.mean(dim=0)
         centered = rows - mean
@@ -53,4 +65,4 @@ class PCAMethod:
         components = v[:, :num_concepts].T
         return PCAConceptAutoencoder(
             mean=mean, components=components, batch_size=self.batch_size
-        )
+        ).to(device or z.device)

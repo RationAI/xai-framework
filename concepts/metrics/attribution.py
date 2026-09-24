@@ -3,6 +3,7 @@ from torch import Tensor
 
 from concepts.decomposition import TorchvisionDecomposition
 from concepts.methods import ConceptAutoencoder
+from concepts.metrics.common import decoded_head
 from concepts.typing import ConceptBatch
 
 
@@ -24,21 +25,19 @@ def insertion_total_attribution(
     rows = torch.arange(n, device=u.device)
 
     # no_grad: this is a fixed forward pass repeated num_concepts times, not a
-    # gradient computation (contrast estimate_gamma_curvature) -- decode/
-    # predict_from_latent otherwise build a needless backward graph through g
-    # whenever the method has learnable decoder weights (SAE/NonlinearAE).
+    # gradient computation (contrast estimate_gamma_curvature) -- decode/g
+    # otherwise build a needless backward graph whenever the method has
+    # learnable decoder weights (SAE/NonlinearAE).
     with torch.no_grad():
         zero = torch.zeros_like(u[:1])
-        baseline_full = decomposition.predict_from_latent(autoencoder.decode(zero))[
-            0
-        ]  # [out_dim]
-        baseline = baseline_full[target_index]  # [N]
+        baseline = decoded_head(decomposition, autoencoder, zero)[0][
+            target_index
+        ]  # [N]
 
         total = baseline.clone()
         for i in range(autoencoder.num_concepts):
-            u_i = autoencoder.zero_concept(u, i)
-            gamma_i_full = decomposition.predict_from_latent(
-                autoencoder.decode(u_i)
+            gamma_i_full = decoded_head(
+                decomposition, autoencoder, autoencoder.zero_concept(u, i)
             )  # [N, out_dim]
             total = total + (gamma_i_full[rows, target_index] - baseline)
     return total

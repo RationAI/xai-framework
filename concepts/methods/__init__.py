@@ -1,4 +1,6 @@
-from typing import Protocol
+from typing import Protocol, Self
+
+import torch
 
 from concepts.typing import ConceptBatch, LatentBatch
 
@@ -17,6 +19,15 @@ class ConceptAutoencoder(Protocol):
 
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch: ...
 
+    def to(self, device: torch.device | str) -> Self: ...
+
 
 class ConceptMethod(Protocol):
-    def fit(self, z: LatentBatch, num_concepts: int) -> ConceptAutoencoder: ...
+    def fit(
+        self,
+        z: LatentBatch,
+        num_concepts: int,
+        device: torch.device | str | None = None,
+    ) -> ConceptAutoencoder:
+        """Fits on `z` (which may stay on cpu); returns an autoencoder on `device`."""
+        ...

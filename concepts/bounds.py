@@ -1,4 +1,6 @@
+import gc
 import json
+import traceback
 from pathlib import Path
 
 import hydra
@@ -11,6 +13,7 @@ from torch import manual_seed
 
 from concepts import metrics
 from concepts.caching import extract_and_cache_latents
+from concepts.methods.common import apply_batched
 from concepts.probes.decoded_head import AffineDecodedHead
 
 
@@ -19,7 +22,7 @@ from concepts.probes.decoded_head import AffineDecodedHead
 def main(config: DictConfig, logger: MLFlowLogger) -> None:
     try:
         _run(config, logger)
-    except Exception:
+    except Exception as exc:
         # Hydra multirun runs every job sequentially in one process; MLflow's
         # fluent API only allows one active run per process, so the next job's
         # mlflow.start_run() would fail with "already active" unless this run
@@ -27,9 +30,18 @@ def main(config: DictConfig, logger: MLFlowLogger) -> None:
         # this because the process exits right after, and mlflow's atexit hook
         # closes the dangling run silently).
         mlflow.end_run(status="FAILED")
+        # The traceback keeps _run's frame, and with it every tensor it held,
+        # alive while Hydra records the failure. Dropping those locals lets the
+        # memory be freed below, so one OOM does not also fail every later
+        # job of the multirun (seen on a 16GB P100).
+        traceback.clear_frames(exc.__traceback__)
         raise
     else:
         mlflow.end_run(status="FINISHED")
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 def _run(config: DictConfig, logger: MLFlowLogger) -> None:
@@ -53,9 +65,12 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         num_samples=config.data.num_samples,
         device=device,
     )
-    # cache is always stored on cpu (see extract_and_cache_latents); move onto
-    # the run's device here so it applies on both a fresh extraction and a cache hit
-    z, f_x = z.to(device), f_x.to(device)
+    # z stays on cpu (the cache always is, see extract_and_cache_latents): at
+    # layer4 it is ~10GB for 25k samples, more than many gpus hold. Everything
+    # latent-sized below streams chunks of samples to `device` instead. The
+    # outputs f(x), and later the concept representations u, are small enough
+    # to live on `device` whole.
+    f_x = f_x.to(device)
 
     num_fit = int(config.eval.fit_fraction * z.shape[0])
     z_fit, z_eval = z[:num_fit], z[num_fit:]
@@ -66,19 +81,22 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
     # randomized fits (e.g. torch.pca_lowrank) depend on the cache state.
     manual_seed(config.eval.seed)
     method = hydra.utils.instantiate(config.method.extractor)
-    autoencoder = method.fit(z_fit, config.eval.num_concepts)
+    autoencoder = method.fit(z_fit, config.eval.num_concepts, device=device)
 
-    u_fit = autoencoder.encode(z_fit)
-    u_eval = autoencoder.encode(z_eval)
-    # no_grad: decode/predict_from_latent build a backward graph through g whenever
-    # the method has learnable decoder weights (SAE/NonlinearAE), even though
-    # nothing here calls .backward() -- that's pure wasted activation memory.
+    # no_grad: encode/decode/g build a backward graph whenever the method has
+    # learnable weights (SAE/NonlinearAE), even though nothing here calls
+    # .backward() -- that's pure wasted activation memory.
+    batch_size = decomposition.batch_size
     with torch.no_grad():
-        z_hat_eval = autoencoder.decode(u_eval)
-        f_a_eval = decomposition.predict_from_latent(z_hat_eval)
-        f_a_fit = decomposition.predict_from_latent(autoencoder.decode(u_fit))
-
-    re = metrics.reconstruction_error(z_eval, z_hat_eval)
+        u_fit = apply_batched(autoencoder.encode, z_fit, batch_size, device).to(device)
+        u_eval = apply_batched(autoencoder.encode, z_eval, batch_size, device).to(
+            device
+        )
+        f_a_eval = metrics.decoded_head(decomposition, autoencoder, u_eval)
+        f_a_fit = metrics.decoded_head(decomposition, autoencoder, u_fit)
+        re = metrics.reconstruction_error(
+            autoencoder, z_eval, u_eval, batch_size, device
+        )
     fe = metrics.fidelity_error(f_eval, f_a_eval)
 
     # MCE is an infimum over all heads gamma; each fitted head only gives an

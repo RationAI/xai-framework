@@ -52,7 +52,9 @@ def extract_and_cache_latents(
                 logits = torch.empty(
                     (total, *batch_logits.shape[1:]), dtype=batch_logits.dtype
                 )
-                labels = torch.empty((total, *batch_labels.shape[1:]), dtype=batch_labels.dtype)
+                labels = torch.empty(
+                    (total, *batch_labels.shape[1:]), dtype=batch_labels.dtype
+                )
             n = batch_z.shape[0]
             z[offset : offset + n] = batch_z.cpu()
             logits[offset : offset + n] = batch_logits.cpu()

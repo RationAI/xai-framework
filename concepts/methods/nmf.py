@@ -1,3 +1,5 @@
+from typing import Self
+
 import torch
 from sklearn.decomposition import NMF as SKNMF
 
@@ -42,14 +44,25 @@ class NMFConceptAutoencoder:
     def zero_concept(self, u: ConceptBatch, index: int) -> ConceptBatch:
         return zero_all_but(u, index)
 
+    def to(self, device: torch.device | str) -> Self:
+        self.components = self.components.to(device)
+        return self
+
 
 class NMFMethod:
-    def __init__(self, max_iter: int = 200, seed: int = 0, batch_size: int = 4096) -> None:
+    def __init__(
+        self, max_iter: int = 200, seed: int = 0, batch_size: int = 4096
+    ) -> None:
         self.max_iter = max_iter
         self.seed = seed
         self.batch_size = batch_size
 
-    def fit(self, z: LatentBatch, num_concepts: int) -> NMFConceptAutoencoder:
+    def fit(
+        self,
+        z: LatentBatch,
+        num_concepts: int,
+        device: torch.device | str | None = None,
+    ) -> NMFConceptAutoencoder:
         rows = to_rows(z).clamp(min=0)
         model = SKNMF(
             n_components=num_concepts,
@@ -61,4 +74,4 @@ class NMFMethod:
         components = torch.from_numpy(model.components_).to(rows)
         return NMFConceptAutoencoder(
             model=model, components=components, batch_size=self.batch_size
-        )
+        ).to(device or z.device)
