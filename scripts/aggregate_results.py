@@ -24,7 +24,10 @@ _METHOD_COLOR = {
     "sae": "#eda100",  # yellow
     "nonlinear_ae": "#e87ba4",  # magenta
 }
-_METRICS = ["RE", "FE", "MCE", "AE", "L_g", "M"]
+_MCE_UB = ["MCE_UB_mlp", "MCE_UB_residual", "MCE_UB_gD"]
+_ERRORS = ["RE", "FE", *_MCE_UB, "FE_target", "ATE", "ADD"]
+_BOUNDS = ["FE_bound", "ADD_bound", "ATE_bound"]
+_METRICS = [f"{name}_RMSE" for name in _ERRORS + _BOUNDS] + ["L_g", "M"]
 
 
 def fetch_results(experiment_name: str) -> pd.DataFrame:
@@ -47,18 +50,28 @@ def fetch_results(experiment_name: str) -> pd.DataFrame:
         "params.data": "data",
         "params.num_samples": "num_samples",
         "params.seed": "seed",
-        "metrics.RE": "RE",
-        "metrics.FE": "FE",
-        "metrics.MCE": "MCE",
-        "metrics.AE": "AE",
-        "metrics.MCE_leq_FE": "MCE_leq_FE",
-        "metrics.L_g": "L_g",
-        "metrics.L_g_ci_low": "L_g_ci_low",
-        "metrics.L_g_ci_high": "L_g_ci_high",
-        "metrics.M": "M",
-        "metrics.M_ci_low": "M_ci_low",
-        "metrics.M_ci_high": "M_ci_high",
-        "metrics.FE_leq_Lg2_RE": "FE_leq_Lg2_RE",
+        **{
+            f"metrics.{name}_{scale}": f"{name}_{scale}"
+            for name in _ERRORS + _BOUNDS
+            for scale in ("MSE", "RMSE")
+        },
+        **{
+            f"metrics.{name}": name
+            for name in [
+                "L_g",
+                "L_g_sampled",
+                "L_g_sampled_ci_low",
+                "L_g_sampled_ci_high",
+                "M",
+                "M_ci_low",
+                "M_ci_high",
+                "C4_root",
+                "FE_leq_bound",
+                *[f"{name}_leq_FE" for name in _MCE_UB],
+                "ADD_leq_bound",
+                "ATE_leq_bound",
+            ]
+        },
     }
     missing = [c for c in keep if c not in runs.columns]
     if missing:
@@ -98,7 +111,9 @@ def plot_metric(df: pd.DataFrame, metric: str, out_path: Path) -> None:
                 for b in boundaries
             ]
             offsets = [xi + (i - (len(methods) - 1) / 2) * width for xi in x]
-            ax.bar(offsets, values, width=width, label=method, color=_METHOD_COLOR[method])
+            ax.bar(
+                offsets, values, width=width, label=method, color=_METHOD_COLOR[method]
+            )
         ax.set_xticks(list(x))
         ax.set_xticklabels(boundaries, rotation=30, ha="right")
         ax.set_title(f"k={k}")

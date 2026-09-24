@@ -3,20 +3,22 @@ from torch import Tensor
 
 from concepts.decomposition import TorchvisionDecomposition
 from concepts.methods import ConceptAutoencoder
-from concepts.typing import ConceptBatch, OutputBatch
+from concepts.typing import ConceptBatch
 
 
-def attribution_error(
+def insertion_total_attribution(
     decomposition: TorchvisionDecomposition,
     autoencoder: ConceptAutoencoder,
-    f_x: OutputBatch,
     u: ConceptBatch,
     target_index: Tensor,
 ) -> Tensor:
-    """Pointwise AE(A;x) = |f(x) - gamma(0) - sum_i phi(x;i)|, gamma = g o D.
+    """Pointwise TA(A,phi;x) = b + sum_i phi(x;i) with insertion phi(x;i) = gamma(S_i C(x)) - b.
 
-    `target_index[n]` picks the scalar output coordinate explained for sample n
-    (the framework's f is scalar-valued) -- typically the predicted class.
+    gamma = g o D and b = gamma(0). `target_index[n]` picks the scalar output
+    coordinate explained for sample n (the framework's attribution setting has
+    N=1) -- typically the predicted class. Returns shape [N].
+
+    ATE compares this against f(x), ADD against f_A(x) (both at target_index).
     """
     n = u.shape[0]
     rows = torch.arange(n, device=u.device)
@@ -32,18 +34,16 @@ def attribution_error(
         ]  # [out_dim]
         baseline = baseline_full[target_index]  # [N]
 
-        contributions = torch.zeros(n, device=u.device)
+        total = baseline.clone()
         for i in range(autoencoder.num_concepts):
             u_i = autoencoder.zero_concept(u, i)
             gamma_i_full = decomposition.predict_from_latent(
                 autoencoder.decode(u_i)
             )  # [N, out_dim]
-            contributions = contributions + (gamma_i_full[rows, target_index] - baseline)
-
-    f_r = f_x[rows, target_index]
-    return (f_r - baseline - contributions).abs()
+            total = total + (gamma_i_full[rows, target_index] - baseline)
+    return total
 
 
-def mean_squared_attribution_error(pointwise_ae: Tensor) -> Tensor:
-    """AE_p(A) = E_x[AE(A;x)^2]."""
-    return (pointwise_ae**2).mean()
+def representation_fourth_moment_root(u: ConceptBatch) -> Tensor:
+    """sqrt(E_x[||C(x)||_2^4]), the factor multiplying M in the ADD bound (Theorem 2)."""
+    return u.flatten(1).pow(2).sum(dim=1).pow(2).mean().sqrt()

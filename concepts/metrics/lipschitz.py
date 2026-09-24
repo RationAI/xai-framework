@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
-from concepts.decomposition import TorchvisionDecomposition
+from concepts.decomposition import TorchvisionDecomposition, _SpatialTail
 from concepts.methods import ConceptAutoencoder
 from concepts.typing import ConceptBatch, LatentBatch
 
@@ -104,6 +104,36 @@ def estimate_g_lipschitz(
     return estimate_lipschitz(z, f_z, **kwargs)
 
 
+def exact_g_lipschitz(
+    decomposition: TorchvisionDecomposition, latent_shape: torch.Size
+) -> float:
+    """Exact L_g (Theorem 1) for boundaries where g is affine.
+
+    - penultimate: g(z) = Wz + b, so L_g = ||W||_2 (largest singular value).
+    - resnet layer4: g(z) = W avgpool(z) + b with z in R^{C x S}. The pooling map
+      A = (1/S)[I ... I] has A A^T = I/S, so ||W A||_2 = ||W||_2 / sqrt(S).
+
+    Any other g (remaining conv blocks at layer1-3) raises, since its Lipschitz
+    constant has no closed form.
+    """
+    g = decomposition.g
+    if isinstance(g, nn.Linear):
+        head, num_positions = g, 1
+    elif (
+        isinstance(g, _SpatialTail)
+        and len(g.blocks) == 0
+        and isinstance(g.pool, nn.AdaptiveAvgPool2d)
+        and isinstance(g.head, nn.Linear)
+    ):
+        head, num_positions = g.head, int(torch.Size(latent_shape[2:]).numel())
+    else:
+        raise NotImplementedError(
+            f"exact L_g needs an affine g; boundary '{decomposition.boundary}' is not"
+        )
+    spectral_norm = torch.linalg.matrix_norm(head.weight.detach().double(), ord=2)
+    return spectral_norm.item() / num_positions**0.5
+
+
 def _grad_at(
     decomposition: TorchvisionDecomposition,
     autoencoder: ConceptAutoencoder,
@@ -132,7 +162,7 @@ def estimate_gamma_curvature(
     """Estimates M from Theorem 2: the gradient-Lipschitz constant of gamma=g o D.
 
     `target_index[i]` (each sample's own explained class, matching
-    `attribution_error`) generally differs across samples, so gamma is a
+    `insertion_total_attribution`) generally differs across samples, so gamma is a
     *different* scalar function per row: gamma_i = P_{target_index[i]} o g o D.
     Cross-sample pairs (as in `estimate_lipschitz`) would then measure how much
     gradients differ ACROSS classes, not the curvature of any single gamma_i --

@@ -21,6 +21,7 @@ class NonlinearAEConceptAutoencoder:
         self.decoder = decoder
         self.num_concepts = decoder[0].in_features
         self.batch_size = batch_size
+        self.affine_decoder = False
 
     def encode(self, z: LatentBatch) -> ConceptBatch:
         rows = to_rows(z)

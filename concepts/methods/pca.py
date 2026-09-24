@@ -18,6 +18,7 @@ class PCAConceptAutoencoder:
         self.components = components  # [k, C], orthonormal rows
         self.num_concepts = components.shape[0]
         self.batch_size = batch_size
+        self.affine_decoder = True
 
     def encode(self, z: LatentBatch) -> ConceptBatch:
         rows = to_rows(z)

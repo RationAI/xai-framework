@@ -21,6 +21,7 @@ class NMFConceptAutoencoder:
         )
         self.num_concepts = components.shape[0]
         self.batch_size = batch_size
+        self.affine_decoder = True
 
     def encode(self, z: LatentBatch) -> ConceptBatch:
         rows = to_rows(z).clamp(min=0)  # NMF requires nonnegative input

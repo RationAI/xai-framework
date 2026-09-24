@@ -21,6 +21,7 @@ class SAEConceptAutoencoder:
         self.decoder = decoder
         self.num_concepts = decoder.in_features
         self.batch_size = batch_size
+        self.affine_decoder = True
 
     def encode(self, z: LatentBatch) -> ConceptBatch:
         rows = to_rows(z)

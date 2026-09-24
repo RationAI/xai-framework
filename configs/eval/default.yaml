@@ -1,12 +1,31 @@
 num_concepts: 16
 seed: 0
 fit_fraction: 0.5 # fraction of cached latents used to fit E/D and the MCE probe; rest held out for evaluation
-probe:
-  _target_: concepts.probes.mlp.MLPProbe
-  hidden_dim: 128
-  epochs: 50
-  lr: 0.001
-  batch_size: 4096
+probes:
+  # Three upper bounds on MCE (an infimum over all heads gamma); see concepts/bounds.py.
+  mlp: # MLP on u from random init
+    _target_: concepts.probes.mlp.MLPProbe
+    hidden_dim: 128
+    epochs: 50
+    lr: 0.001
+    batch_size: 4096
+  residual: # g o D + zero-initialized MLP correction
+    _target_: concepts.probes.residual.ResidualProbe
+    hidden_dim: 128
+    epochs: 100
+    lr: 0.001
+    batch_size: 256
+    val_fraction: 0.1
+    patience: 10
+    seed: ${eval.seed}
+  finetuned_gD: # g' o D' fine-tuned from g o D; only for nonlinear decoders (affine ones use closed-form least squares)
+    _target_: concepts.probes.decoded_head.FineTunedDecodedHead
+    epochs: 100
+    lr: 0.0001
+    batch_size: 256
+    val_fraction: 0.1
+    patience: 10
+    seed: ${eval.seed}
 lipschitz:
   # Sample-based estimates of L_g (Theorem 1) and M (Theorem 2); see
   # concepts/metrics/lipschitz.py for what these do and do not guarantee.
