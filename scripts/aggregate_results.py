@@ -92,6 +92,9 @@ def fetch_results(experiment_name: str) -> pd.DataFrame:
             "the metadata.hyperparams block in configs/concepts.yaml?"
         )
 
+    # Older runs predate the current metric schema (no rho_FE); failed or
+    # orphaned runs have partial metrics. Keep only complete, current runs.
+    runs = runs[(runs["status"] == "FINISHED") & runs["metrics.rho_FE"].notna()]
     df = runs[list(keep)].rename(columns=keep).dropna(subset=["boundary", "method"])
     df["num_concepts"] = df["num_concepts"].astype(int)
     df["boundary"] = pd.Categorical(
@@ -99,6 +102,17 @@ def fetch_results(experiment_name: str) -> pd.DataFrame:
     )
     df["method"] = pd.Categorical(df["method"], categories=_METHOD_ORDER, ordered=True)
     return df.sort_values(["boundary", "method", "num_concepts"]).reset_index(drop=True)
+
+
+def summarize(df: pd.DataFrame) -> pd.DataFrame:
+    """Mean and std over seeds for every numeric column, one row per grid cell."""
+    group = ["model", "boundary", "method", "num_concepts", "data", "num_samples"]
+    values = df.drop(columns=["seed"]).select_dtypes("number").columns.difference(group)
+    grouped = df.groupby(group, observed=True)[list(values)]
+    summary = grouped.agg(["mean", "std"])
+    summary.columns = [f"{name}_{stat}" for name, stat in summary.columns]
+    summary.insert(0, "num_seeds", grouped.size())
+    return summary.reset_index()
 
 
 def plot_metric(df: pd.DataFrame, metric: str, out_path: Path) -> None:
@@ -157,6 +171,11 @@ def main() -> None:
     csv_path = out_dir / "results.csv"
     df.to_csv(csv_path, index=False)
     print(f"wrote {len(df)} rows to {csv_path}")
+
+    summary_path = out_dir / "results_summary.csv"
+    summary = summarize(df)
+    summary.to_csv(summary_path, index=False)
+    print(f"wrote {len(summary)} rows to {summary_path}")
 
     plots_dir = out_dir / "plots"
     plots_dir.mkdir(exist_ok=True)
