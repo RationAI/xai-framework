@@ -3,6 +3,7 @@ extractor:
   _target_: concepts.methods.nonlinear_ae.NonlinearAEMethod
   hidden_multiplier: 4 # encoder/decoder hidden width = min(hidden_multiplier * k, latent dim)
   epochs: 50
+  min_steps: 5000 # epochs are raised to reach this many optimizer steps (penultimate has 1 row per sample)
   lr: 0.001
   batch_size: 4096
   seed: ${eval.seed}

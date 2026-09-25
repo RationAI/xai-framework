@@ -2,7 +2,7 @@ import torch
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from concepts.methods.common import apply_batched
+from concepts.methods.common import apply_batched, num_epochs
 from concepts.typing import ConceptBatch, OutputBatch
 
 
@@ -13,11 +13,13 @@ class MLPProbe:
         self,
         hidden_dim: int = 128,
         epochs: int = 50,
+        min_steps: int = 5000,
         lr: float = 1e-3,
         batch_size: int = 4096,
     ) -> None:
         self.hidden_dim = hidden_dim
         self.epochs = epochs
+        self.min_steps = min_steps
         self.lr = lr
         self.batch_size = batch_size
         self.net: nn.Sequential | None = None
@@ -36,7 +38,8 @@ class MLPProbe:
             shuffle=True,
             generator=torch.Generator().manual_seed(0),
         )
-        for _ in range(self.epochs):
+        epochs = num_epochs(self.epochs, self.min_steps, u.shape[0], self.batch_size)
+        for _ in range(epochs):
             for batch_u, batch_targets in loader:
                 optimizer.zero_grad()
                 loss = torch.mean(

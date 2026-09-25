@@ -1,3 +1,4 @@
+import torch
 from torch import Tensor
 
 from concepts.decomposition import TorchvisionDecomposition
@@ -28,3 +29,31 @@ def decoded_head(
         decomposition.batch_size,
         device=decomposition.device,
     )
+
+
+def decoded_head_gradient(
+    decomposition: TorchvisionDecomposition,
+    autoencoder: ConceptAutoencoder,
+    v: Tensor,
+    target_index: Tensor,
+) -> Tensor:
+    """Per-row gradient of gamma_i = P_{target_index[i]} o g o D at v[i].
+
+    Rows are independent, so this runs one chunk of samples at a time on the
+    decomposition's device (one small autograd graph per chunk, instead of a
+    graph through D(v) for every row at once) and returns on `v`'s device.
+    """
+    device = decomposition.device
+    grads = []
+    for v_chunk, target_chunk in zip(
+        v.split(decomposition.batch_size),
+        target_index.split(decomposition.batch_size),
+        strict=True,
+    ):
+        v_chunk = v_chunk.detach().to(device).requires_grad_(True)
+        out = decomposition.g(autoencoder.decode(v_chunk))
+        rows = torch.arange(v_chunk.shape[0], device=device)
+        scalar_out = out[rows, target_chunk.to(device)]
+        (grad_v,) = torch.autograd.grad(scalar_out.sum(), v_chunk)
+        grads.append(grad_v.detach().to(v.device))
+    return torch.cat(grads)

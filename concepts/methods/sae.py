@@ -4,7 +4,13 @@ import torch
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from concepts.methods.common import apply_batched, from_rows, to_rows, zero_all_but
+from concepts.methods.common import (
+    apply_batched,
+    from_rows,
+    num_epochs,
+    to_rows,
+    zero_all_but,
+)
 from concepts.typing import ConceptBatch, LatentBatch
 
 
@@ -51,6 +57,7 @@ class SAEMethod:
         hidden_multiplier: int = 4,
         sparsity_weight: float = 1e-3,
         epochs: int = 50,
+        min_steps: int = 5000,
         lr: float = 1e-3,
         batch_size: int = 4096,
         seed: int = 0,
@@ -58,6 +65,7 @@ class SAEMethod:
         self.hidden_multiplier = hidden_multiplier
         self.sparsity_weight = sparsity_weight
         self.epochs = epochs
+        self.min_steps = min_steps
         self.lr = lr
         self.batch_size = batch_size
         self.seed = seed
@@ -94,7 +102,8 @@ class SAEMethod:
             shuffle=True,
             generator=generator,
         )
-        for _ in range(self.epochs):
+        epochs = num_epochs(self.epochs, self.min_steps, rows.shape[0], self.batch_size)
+        for _ in range(epochs):
             for (batch,) in loader:
                 batch = batch.to(device)
                 optimizer.zero_grad()

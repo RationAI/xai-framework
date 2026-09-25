@@ -98,6 +98,9 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         re = metrics.reconstruction_error(
             autoencoder, z_eval, u_eval, batch_size, device
         )
+        re_pooled = metrics.pooled_reconstruction_error(
+            autoencoder, z_eval, u_eval, batch_size, device
+        )
     fe = metrics.fidelity_error(f_eval, f_a_eval)
 
     # MCE is an infimum over all heads gamma; each fitted head only gives an
@@ -129,12 +132,18 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
     target_index = f_eval.argmax(dim=-1)
     rows = torch.arange(f_eval.shape[0], device=f_eval.device)
     f_target, f_a_target = f_eval[rows, target_index], f_a_eval[rows, target_index]
-    total_attribution = metrics.insertion_total_attribution(
+    total_attributions = metrics.total_attributions(
         decomposition, autoencoder, u_eval, target_index
     )
     fe_target = torch.mean((f_target - f_a_target) ** 2)
-    ate = torch.mean((f_target - total_attribution) ** 2)
-    add = torch.mean((f_a_target - total_attribution) ** 2)
+    ate = {
+        rule: torch.mean((f_target - total) ** 2)
+        for rule, total in total_attributions.items()
+    }
+    add = {
+        rule: torch.mean((f_a_target - total) ** 2)
+        for rule, total in total_attributions.items()
+    }
 
     lipschitz_kwargs = {
         "num_trials": config.eval.lipschitz.num_trials,
@@ -163,13 +172,15 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         "FE": fe.item(),
         **{f"MCE_UB_{name}": value.item() for name, value in mce_ub.items()},
         "FE_target": fe_target.item(),
-        "ATE": ate.item(),
-        "ADD": add.item(),
+        **{f"ATE_{rule}": value.item() for rule, value in ate.items()},
+        **{f"ADD_{rule}": value.item() for rule, value in add.items()},
+        "RE_pooled": re_pooled.item(),
     }
     errors_rmse = {name: value**0.5 for name, value in errors_mse.items()}
     # Right-hand sides of the bounds, in RMSE form:
     #   FE <= L_g RE (Theorem 1), ADD <= M sqrt(E||C||^4) (Theorem 2),
     #   ATE <= FE + ADD bound (Corollary, with the scalar FE at target_index).
+    # The ADD bound (and so the ATE bound) is the same for all three rules.
     # M is sample-based (a lower bound on the true constant), so the two
     # attribution bounds are estimates; the FE bound uses the exact L_g.
     bounds_rmse = {
@@ -177,6 +188,14 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         "ADD_bound": m.point * c4_root,
     }
     bounds_rmse["ATE_bound"] = errors_rmse["FE_target"] + bounds_rmse["ADD_bound"]
+
+    # rho_FE = FE / (L_g RE) = alpha * kappa exactly (eq. cg-fidelity-slack),
+    # with ||W||_2 = L_g sqrt(S) and S the number of spatial locations:
+    #   alpha = FE / (||W||_2 RMSE(e_bar)),  kappa = sqrt(S) RMSE(e_bar) / RE.
+    num_positions = z_eval[0, 0].numel() if z_eval.dim() > 2 else 1
+    rho_fe = errors_rmse["FE"] / bounds_rmse["FE_bound"]
+    alpha = errors_rmse["FE"] / (l_g * num_positions**0.5 * errors_rmse["RE_pooled"])
+    kappa = num_positions**0.5 * errors_rmse["RE_pooled"] / errors_rmse["RE"]
 
     # float32 slack for the checks below: e.g. an affine gamma gives M = 0 and
     # ADD = 0 in exact arithmetic, but ADD comes out ~1e-7 numerically.
@@ -198,6 +217,9 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         "M_ci_low": m.ci_low,
         "M_ci_high": m.ci_high,
         "C4_root": c4_root,
+        "rho_FE": rho_fe,
+        "alpha": alpha,
+        "kappa": kappa,
         "FE_leq_bound": leq(errors_rmse["FE"], bounds_rmse["FE_bound"]),
         # MCE <= FE holds by Proposition (g o D is one admissible head); a 0 here
         # only means that head did worse than g o D, not that the bound failed.
@@ -207,8 +229,18 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
             )
             for name in mce_ub
         },
-        "ADD_leq_bound": leq(errors_rmse["ADD"], bounds_rmse["ADD_bound"]),
-        "ATE_leq_bound": leq(errors_rmse["ATE"], bounds_rmse["ATE_bound"]),
+        **{
+            f"ADD_{rule}_leq_bound": leq(
+                errors_rmse[f"ADD_{rule}"], bounds_rmse["ADD_bound"]
+            )
+            for rule in metrics.ATTRIBUTION_RULES
+        },
+        **{
+            f"ATE_{rule}_leq_bound": leq(
+                errors_rmse[f"ATE_{rule}"], bounds_rmse["ATE_bound"]
+            )
+            for rule in metrics.ATTRIBUTION_RULES
+        },
     }
     logger.log_metrics(results)
 

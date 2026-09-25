@@ -5,6 +5,7 @@ from torch import Tensor, nn
 
 from concepts.decomposition import TorchvisionDecomposition, _SpatialTail
 from concepts.methods import ConceptAutoencoder
+from concepts.metrics.common import decoded_head_gradient
 from concepts.typing import ConceptBatch, LatentBatch
 
 
@@ -134,34 +135,6 @@ def exact_g_lipschitz(
     return spectral_norm.item() / num_positions**0.5
 
 
-def _grad_at(
-    decomposition: TorchvisionDecomposition,
-    autoencoder: ConceptAutoencoder,
-    v: Tensor,
-    target_index: Tensor,
-) -> Tensor:
-    """Per-row gradient of gamma_i = P_{target_index[i]} o g o D at v[i].
-
-    Rows are independent, so this runs one chunk of samples at a time on the
-    decomposition's device (one small autograd graph per chunk, instead of a
-    graph through D(v) for every row at once) and returns on `v`'s device.
-    """
-    device = decomposition.device
-    grads = []
-    for v_chunk, target_chunk in zip(
-        v.split(decomposition.batch_size),
-        target_index.split(decomposition.batch_size),
-        strict=True,
-    ):
-        v_chunk = v_chunk.detach().to(device).requires_grad_(True)
-        out = decomposition.g(autoencoder.decode(v_chunk))
-        rows = torch.arange(v_chunk.shape[0], device=device)
-        scalar_out = out[rows, target_chunk.to(device)]
-        (grad_v,) = torch.autograd.grad(scalar_out.sum(), v_chunk)
-        grads.append(grad_v.detach().to(v.device))
-    return torch.cat(grads)
-
-
 def estimate_gamma_curvature(
     decomposition: TorchvisionDecomposition,
     autoencoder: ConceptAutoencoder,
@@ -176,7 +149,7 @@ def estimate_gamma_curvature(
     """Estimates M from Theorem 2: the gradient-Lipschitz constant of gamma=g o D.
 
     `target_index[i]` (each sample's own explained class, matching
-    `insertion_total_attribution`) generally differs across samples, so gamma is a
+    `total_attributions`) generally differs across samples, so gamma is a
     *different* scalar function per row: gamma_i = P_{target_index[i]} o g o D.
     Cross-sample pairs (as in `estimate_lipschitz`) would then measure how much
     gradients differ ACROSS classes, not the curvature of any single gamma_i --
@@ -193,7 +166,7 @@ def estimate_gamma_curvature(
     """
     n = u.shape[0]
     generator = torch.Generator().manual_seed(seed)
-    grad_base = _grad_at(decomposition, autoencoder, u, target_index)
+    grad_base = decoded_head_gradient(decomposition, autoencoder, u, target_index)
 
     trial_maxima = []
     all_ratios = []
@@ -205,7 +178,7 @@ def estimate_gamma_curvature(
         direction = direction / direction.norm(dim=1, keepdim=True).clamp_min(1e-12)
         step = perturbation_scale * (u_idx_flat.norm(dim=1, keepdim=True) + 1e-6)
         u_perturbed = u_idx + (step * direction).view_as(u_idx)
-        grad_perturbed = _grad_at(
+        grad_perturbed = decoded_head_gradient(
             decomposition, autoencoder, u_perturbed, target_index[idx]
         )
         ratios = _ratios(u_idx, grad_base[idx], u_perturbed, grad_perturbed)

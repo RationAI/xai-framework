@@ -25,7 +25,16 @@ _METHOD_COLOR = {
     "nonlinear_ae": "#e87ba4",  # magenta
 }
 _MCE_UB = ["MCE_UB_mlp", "MCE_UB_residual", "MCE_UB_gD"]
-_ERRORS = ["RE", "FE", *_MCE_UB, "FE_target", "ATE", "ADD"]
+_RULES = ["insertion", "occlusion", "gradxinput"]
+_ERRORS = [
+    "RE",
+    "RE_pooled",
+    "FE",
+    *_MCE_UB,
+    "FE_target",
+    *[f"ATE_{rule}" for rule in _RULES],
+    *[f"ADD_{rule}" for rule in _RULES],
+]
 _BOUNDS = ["FE_bound", "ADD_bound", "ATE_bound"]
 _METRICS = [f"{name}_RMSE" for name in _ERRORS + _BOUNDS] + ["L_g", "M"]
 
@@ -66,10 +75,13 @@ def fetch_results(experiment_name: str) -> pd.DataFrame:
                 "M_ci_low",
                 "M_ci_high",
                 "C4_root",
+                "rho_FE",
+                "alpha",
+                "kappa",
                 "FE_leq_bound",
                 *[f"{name}_leq_FE" for name in _MCE_UB],
-                "ADD_leq_bound",
-                "ATE_leq_bound",
+                *[f"ADD_{rule}_leq_bound" for rule in _RULES],
+                *[f"ATE_{rule}_leq_bound" for rule in _RULES],
             ]
         },
     }

@@ -37,7 +37,11 @@ class NMFConceptAutoencoder:
         return from_rows(u, z)
 
     def decode(self, u: ConceptBatch) -> LatentBatch:
-        rows = to_rows(u).clamp(min=0)
+        # No clamp here (unlike encode): encoded u is already nonnegative, and a
+        # clamp would make gamma = g o D nonaffine off the nonnegative orthant --
+        # the M estimator's perturbations and the gradient-times-input rule's
+        # gradients would then see a spurious kink.
+        rows = to_rows(u)
         z = apply_batched(lambda r: r @ self.components, rows, self.batch_size)
         return from_rows(z, u)
 

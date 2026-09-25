@@ -1,3 +1,4 @@
+import math
 from collections.abc import Callable
 
 import torch
@@ -30,6 +31,18 @@ def apply_batched(
     if rows.shape[0] <= batch_size:
         return run(rows)
     return torch.cat([run(chunk) for chunk in rows.split(batch_size)], dim=0)
+
+
+def num_epochs(epochs: int, min_steps: int, num_rows: int, batch_size: int) -> int:
+    """`epochs`, raised if needed so training takes at least `min_steps` optimizer steps.
+
+    An epoch is one step per batch, so the same `epochs` gives very different
+    budgets across boundaries: spatial latents yield H*W rows per sample
+    (layer4: 49), a flat latent only one. E.g. 12,500 penultimate rows at batch
+    size 4096 are 4 steps per epoch, so 50 epochs are only 200 steps.
+    """
+    steps_per_epoch = math.ceil(num_rows / batch_size)
+    return max(epochs, math.ceil(min_steps / steps_per_epoch))
 
 
 def to_rows(z: Tensor) -> Tensor:

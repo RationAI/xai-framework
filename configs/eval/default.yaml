@@ -7,6 +7,7 @@ probes:
     _target_: concepts.probes.mlp.MLPProbe
     hidden_dim: 128
     epochs: 50
+    min_steps: 5000 # epochs are raised to reach this many optimizer steps (penultimate has 1 row per sample)
     lr: 0.001
     batch_size: 4096
   residual: # g o D + zero-initialized MLP correction
