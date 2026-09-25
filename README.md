@@ -1,18 +1,31 @@
-# XAI Framework: Empirical Completeness Bounds
+# XAI Framework: Empirical Tightness of Completeness Bounds
 
-This project empirically tests the theoretical completeness bounds for concept-based
-explainable AI (C-XAI) introduced in the accompanying paper: given a trained model
-`f = g o h` and a `k`-concept autoencoder `A = (E, D)` fitted on its latent space, it
-measures four quantities per (model, boundary, concept-extraction method, `k`) combination:
+This project evaluates how tight the completeness bounds for concept-based explainable AI
+(C-XAI) from the accompanying paper are in practice. Given a trained model `f = g o h`,
+split at a boundary into `h` and the prediction head `g`, and a `k`-concept autoencoder
+`A = (E, D)` fitted on the latents `h(x)`, the induced concept model is `f_A = g o D o E o h`.
+All errors are root-mean-square errors (RMSE) on a held-out half of the data:
 
--   **RE** — reconstruction error of the concept autoencoder
--   **FE** — fidelity error between `f` and the induced concept-autoencoder model `f_A`
--   **MCE** — model completeness error (via a fitted probe on the concept representations)
--   **AE** — mean squared attribution error of per-concept contributions
+-   **RE**: reconstruction error of the concept autoencoder, `RMSE(h, D o E o h)`
+-   **FE**: fidelity error, `RMSE(f, f_A)`
+-   **MCE**: model completeness error, an infimum over all heads on the concept
+    representations; only upper estimates `MCE_UB_*` from fitted heads are reported
+-   **ATE / ADD**: attribution and additivity errors of the concept attributions
+    (insertion, occlusion, gradient-times-input) with respect to `f` and `f_A`
 
-Theorem 1 in the paper guarantees `MCE <= FE <= L_g^2 * RE`; this repo runs the pipeline
-across models, boundaries, methods, and concept counts to check how tightly that bound
-holds in practice.
+The bounds under test are
+
+-   `MCE <= FE <= L_g * RE`, with the exact Lipschitz constant `L_g` of an affine head
+-   `ATE <= FE + ADD` and `ADD <= M * sqrt(E ||C(x)||^4)`, with a sampled estimate of the
+    curvature constant `M`
+
+For each bound, the pipeline logs both sides and whether the bound holds, together with
+the fidelity tightness ratio `rho_FE = FE / (L_g * RE)` and its factors `alpha` and `kappa`.
+Both RMSE and MSE are logged for every error.
+
+The paper evaluates ResNet-50 (torchvision `IMAGENET1K_V2` weights) on 25,000 ImageNet-1k
+validation images per seed, at the `layer4` and `penultimate` boundaries, where `g` is
+affine and `L_g` has a closed form.
 
 ## Installation
 
@@ -27,6 +40,9 @@ holds in practice.
     uv sync --extra job
     ```
 4.  **Configure MLflow:** set `MLFLOW_TRACKING_URI` and credentials (see `.env`).
+5.  **Provide ImageNet-1k:** the loader reads the Hugging Face parquet release of
+    ImageNet-1k (`data/validation-*.parquet` shards) from `{project_path}/data/imagenet-1k`,
+    where `project_path` is set in [`configs/base.yaml`](configs/base.yaml).
 
 ## Configuration
 
@@ -42,7 +58,7 @@ configs
 ├── model                # Model + latent decomposition (f = g o h), e.g. resnet50, vgg16
 ├── data                 # Dataset + loader, e.g. imagenet, imagenette
 ├── method               # Concept extraction method, e.g. pca, nmf, kmeans, sae, nonlinear_ae
-├── eval                 # num_concepts (k), fit/eval split, seed, completeness probe
+├── eval                 # num_concepts (k), fit/eval split, seed, MCE heads, Lipschitz/curvature estimation
 ├── hydra
 │   ├── default.yaml
 │   └── job_logging/custom.yaml
@@ -52,8 +68,12 @@ configs
 ```
 
 For a resnet50/vgg16 decomposition, the `model.decomposition.boundary` override selects
-where the model is split into `h`/`g` (`layer1`-`layer4` or `penultimate` for resnet50;
-`penultimate` only for vgg16 so far).
+where the model is split into `h`/`g`. The bounds pipeline supports `layer4` and
+`penultimate` for resnet50 and `penultimate` for vgg16, the boundaries at which `g` is
+affine and its Lipschitz constant can be computed exactly.
+
+The seed (`eval.seed`) determines the sampled images, the split into fitting and
+evaluation halves, and the initialization of all methods and heads.
 
 Please do not delete the `configs/hydra` directory as it is required for Hydra execution.
 
@@ -61,20 +81,25 @@ Please do not delete the `configs/hydra` directory as it is required for Hydra e
 
 -   **Run a single configuration:**
     ```bash
-    uv run python -m concepts.bounds model=resnet50 data=imagenette method=pca eval.num_concepts=5
+    uv run python -m concepts.bounds model=resnet50 model.decomposition.boundary=layer4 \
+        data=imagenet data.num_samples=25000 method=pca eval.num_concepts=25 eval.seed=0
     ```
--   **Run the full experiment grid** (5 boundaries x 5 methods x 3 concept counts on resnet50/imagenet):
+-   **Run the paper grid** (2 boundaries x 5 methods x 3 concept counts x 3 seeds on
+    resnet50/imagenet, 90 runs):
     ```bash
     scripts/run_sweep.sh
     ```
-    Each combination is a separate Hydra job (`-m` multirun) that logs RE/FE/MCE/AE and its
+    Each combination is a separate Hydra job (`-m` multirun) that logs its metrics and
     hyperparameters to the MLflow experiment named in `configs/base.yaml`
-    (`metadata.experiment_name`), and writes `metrics.json` to
-    `{project_path}/cache/runs/{run_id}/`.
+    (`metadata.experiment_name`) and writes `metrics.json` to
+    `{project_path}/cache/runs/{run_id}/`. Latents are cached per model, boundary, dataset,
+    sample count, and seed. The paper's runs used 64 GiB of RAM; the latents stay in
+    RAM and are streamed to the GPU in chunks, so a 16 GB GPU is sufficient.
 -   **Submit a job to the cluster** instead of running locally, see [`scripts/run_concepts.py`](scripts/run_concepts.py).
--   **Aggregate results** from MLflow into a comparison table and per-metric plots:
+-   **Aggregate results** from MLflow into a per-run table (`results.csv`), a mean and
+    standard deviation over seeds (`results_summary.csv`), and per-metric plots:
     ```bash
-    uv run python scripts/aggregate_results.py
+    uv run python scripts/aggregate_results.py --out-dir results/
     ```
 
 ## Linting, Formatting and Type Checking:
