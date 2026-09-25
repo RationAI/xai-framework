@@ -63,6 +63,7 @@ def _run(config: DictConfig, logger: MLFlowLogger) -> None:
         cache_dir=f"{config.project_path}/cache",
         data_name=config.data.name,
         num_samples=config.data.num_samples,
+        seed=config.data.loader.seed,
         device=device,
     )
     # z stays on cpu (the cache always is, see extract_and_cache_latents): at

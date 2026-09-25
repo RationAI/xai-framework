@@ -10,9 +10,13 @@ from concepts.typing import LatentBatch, OutputBatch
 
 
 def _cache_key(
-    model_name: str, feature_node: str, data_name: str, num_samples: int | None
+    model_name: str,
+    feature_node: str,
+    data_name: str,
+    num_samples: int | None,
+    seed: int,
 ) -> str:
-    raw = f"{model_name}|{feature_node}|{data_name}|{num_samples}"
+    raw = f"{model_name}|{feature_node}|{data_name}|{num_samples}|{seed}"
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
@@ -22,11 +26,16 @@ def extract_and_cache_latents(
     cache_dir: str,
     data_name: str,
     num_samples: int | None,
+    seed: int,
     device: str = "cpu",
 ) -> tuple[LatentBatch, OutputBatch, torch.Tensor]:
-    """Extracts (z, f(x), labels) once and caches them under `cache_dir`, kept forever."""
+    """Extracts (z, f(x), labels) once and caches them under `cache_dir`, kept forever.
+
+    `seed` must be the one the loader subsampled with: it decides which images
+    are in `loader`, so latents cached for one seed are not valid for another.
+    """
     key = _cache_key(
-        decomposition.name, decomposition.feature_node, data_name, num_samples
+        decomposition.name, decomposition.feature_node, data_name, num_samples, seed
     )
     cache_path = Path(cache_dir) / f"latents_{key}.pt"
     if cache_path.exists():
